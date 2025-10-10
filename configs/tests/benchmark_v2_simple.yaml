@@ -13,15 +13,13 @@ defaults:
         - 5
         - 8
         - 11
-      backbone_pretrained_cfg_overlay:
-        file: /dccstor/geofm-finetuning/pretrain_ckpts/v9_no_sea/vit_b/epoch-395-loss-0.0339_clean.pt
+      backbone_ckpt_path: /dccstor/geofm-finetuning/pretrain_ckpts/v9_no_sea/vit_b/epoch-395-loss-0.0339_clean.pt
     model_factory: PrithviModelFactory
     optimizer: AdamW
 tasks:
   - name: chesapeake
     type: segmentation
     direction: max
-    metric: val/Multiclass_Jaccard_Index
     early_stop_patience: 10
     terratorch_task:
       loss: ce

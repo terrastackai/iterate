@@ -15,7 +15,7 @@ from ray.tune.search.optuna import OptunaSearch
 from tabulate import tabulate
 
 from terratorch_iterate.backbone_benchmark import parse_optimization_space
-from terratorch_iterate.benchmark_types import (
+from terratorch_iterate.iterate_types import (
     Defaults,
     Task,
     TrainingSpec,
@@ -166,7 +166,6 @@ def benchmark_backbone(
     with mlflow.start_run(
         run_name=run_name, run_id=run_id, description=description
     ) as run:
-
         if optimization_space is None:
             # no hparams, parallelize over tasks
             ray_tasks = []

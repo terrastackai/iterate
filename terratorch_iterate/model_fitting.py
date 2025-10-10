@@ -33,19 +33,8 @@ from ray import tune
 from ray.air import CheckpointConfig, RunConfig
 from ray.train._internal.storage import StorageContext
 from ray.tune.experiment import Trial
-import pdb
-# for ddp in the future if required
-# import ray
-# from ray.train import report
-# from ray import train
-# from ray.air import CheckpointConfig, ScalingConfig
-# from ray.train.lightning import (
-#     RayDeepSpeedStrategy,
-#     RayLightningEnvironment,
-#     RayTrainReportCallback,
-#     prepare_trainer,
-# )
-# from ray.train.torch import TorchTrainer
+
+
 from ray.tune.integration.pytorch_lightning import TuneReportCheckpointCallback
 from ray.tune.schedulers import FIFOScheduler, TrialScheduler
 from ray.tune.schedulers.hb_bohb import HyperBandForBOHB
@@ -55,7 +44,7 @@ from terratorch.tasks import PixelwiseRegressionTask, SemanticSegmentationTask
 from torchgeo.datamodules import BaseDataModule
 from torchgeo.trainers import BaseTask
 
-from terratorch_iterate.benchmark_types import (
+from terratorch_iterate.iterate_types import (
     ParameterBounds,
     ParameterTypeEnum,
     TrainingSpec,
@@ -63,6 +52,12 @@ from terratorch_iterate.benchmark_types import (
     recursive_merge,
     valid_task_types,
 )
+
+
+from terratorch_iterate.utils import get_logger
+
+LOGGER = get_logger()
+
 
 os.environ["TUNE_DISABLE_AUTO_CALLBACK_LOGGERS"] = (
     "1"  # disable tune loggers, will add csv and json manually. If this is not here, it will log to tensorboard automatically
@@ -124,9 +119,9 @@ class _TuneReportCallback(TuneReportCheckpointCallback, pl.Callback):
 def inject_hparams(training_spec: TrainingSpec, config: dict):
     # treat batch size specially
     config_without_batch_size = copy.deepcopy(config)
-    assert isinstance(
-        config_without_batch_size, dict
-    ), f"Error! Unexpected config type: {config_without_batch_size}"
+    assert isinstance(config_without_batch_size, dict), (
+        f"Error! Unexpected config type: {config_without_batch_size}"
+    )
     batch_size: int | None = config_without_batch_size.pop("batch_size", None)  # type: ignore
     datamodule_with_generated_hparams = copy.deepcopy(training_spec.task.datamodule)
     if batch_size:
@@ -258,7 +253,9 @@ def launch_training(
     test_models: bool,
     delete_models_after_testing: bool,
 ) -> float:
-
+    LOGGER.info(
+        f"launch_training {trainer=} {task=} {datamodule=} {run_name=} {experiment_name=} {metric=} {storage_uri=} {direction=}"
+    )
     with mlflow.start_run(run_name=run_name, nested=True) as run:
         mlflow.set_tag("mlflow.parentRunId", parent_run_id)
         # explicitly log batch_size. Since it is not a model param, it will not be logged
@@ -313,12 +310,17 @@ def launch_training(
             ["metric_name", "step"], verify_integrity=True
         )
         series_val_metrics = df_val_metrics["value"]
+        assert metric in series_val_metrics, (
+            f"Error! {metric} is not in {series_val_metrics}"
+        )
         if direction == "max":
             best_step = series_val_metrics[metric].idxmax()
         elif direction == "min":
             best_step = series_val_metrics[metric].idxmin()
         else:
-            raise Exception(f"Direction must be `max` or `min` but got {direction}")
+            raise Exception(
+                f"Error! Direction must be either `max` or `min` but got {direction}"
+            )
 
         for val_metric_name in val_metrics_names:
             mlflow.log_metric(
@@ -349,9 +351,9 @@ def fit_model(
         PixelwiseRegressionTask,
     ]:
         task.terratorch_task["plot_on_val"] = False
-    assert isinstance(
-        task.terratorch_task, dict
-    ), f"Error! Invalid type: {task.terratorch_task}"
+    assert isinstance(task.terratorch_task, dict), (
+        f"Error! Invalid type: {task.terratorch_task}"
+    )
 
     lightning_task = lightning_task_class(**task.terratorch_task)
 
@@ -443,18 +445,16 @@ def fit_model_with_hparams(
     )
     run_name = f"{run_name}_{trial.number}"
     return fit_model(
-        training_spec_with_generated_hparams,
-        lightning_task_class,
-        run_name,
-        experiment_name,
-        storage_uri,
-        parent_run_id,
-        trial,
+        training_spec=training_spec_with_generated_hparams,
+        lightning_task_class=lightning_task_class,
+        run_name=run_name,
+        experiment_name=experiment_name,
+        storage_uri=storage_uri,
+        parent_run_id=parent_run_id,
+        trial=trial,
         save_models=save_models,
         test_models=test_models,
-    )[
-        0
-    ]  # return only the metric value for optuna
+    )[0]  # return only the metric value for optuna
 
 
 """
@@ -474,7 +474,6 @@ def ray_tune_model(
     backbone_import: str | None = None,
     searcher: Searcher | SearchAlgorithm | None = None,
 ) -> tune.ResultGrid:
-
     if not searcher:
         raise ValueError("searcher must be specified")
     trainable = tune.with_parameters(

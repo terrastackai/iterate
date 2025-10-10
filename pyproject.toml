@@ -13,8 +13,8 @@ include = ["benchmark*"]
 [project]
 
 name = "terratorch-iterate"
-version = "0.1.4"
-requires-python = ">= 3.9"
+version = "0.2.0"
+requires-python = ">= 3.10"
 description = "A terratorch's plugin for benchmarking and hyperparameter optimization"
 authors = [
       { name = "Carlos Gomes"},
@@ -37,9 +37,7 @@ classifiers = [
 readme = "README.md"
 
 dependencies = [
-# ObjectDetection is not supported on terratorch==1.0.2, so iterate relies on main branch
-"terratorch @ git+https://github.com/IBM/terratorch.git", 
-# "terratorch",
+"terratorch>=1.1.0", 
 # requests>=2.32.0 because of this vulnerability https://github.com/psf/requests/security/advisories/GHSA-9wx4-h78v-vm56
 "requests>=2.32.0",
 # Jinja2 vulnerability issue https://github.com/pallets/jinja/security/advisories/GHSA-h75v-3vvj-5mfj
@@ -64,7 +62,6 @@ dependencies = [
 "importlib-metadata",
 "numpy",
 "optuna",
-"tabulate",
 "types-tabulate",
 "ray",
 "gputil",
@@ -73,7 +70,8 @@ dependencies = [
 "configspace",
 "optuna-integration",
 "seaborn",
-"torchgeo"
+"psutil",
+"tabulate>=0.9.0",
 ]
 
 [project.urls]
@@ -82,7 +80,7 @@ Issues = "https://github.com/IBM/terratorch-iterate/issues"
 
 [project.optional-dependencies]
 dev = [
-  "black",
+  "ruff",
   "flake8", 
   "mkdocs-material",
   "mkdocstrings[python]",
@@ -100,14 +98,19 @@ test = [
 utility = [
   "geobench"
 ]
+# If you want to catch Nvidia GPU metrics, you also need to install pynvml:
+nvidia = ["pynvml"]
+
+# If you are using AMD/HIP GPUs, install pyrsmi 
+amd = ["pyrsmi"]
 
 [tool.black]
-target-version = ["py310"]
+target-version = ["py312"]
 line-length = 88
 skip-string-normalization = true
 
 [project.scripts]
-iterate = "benchmark.main:main"
+iterate = "terratorch_iterate.main:main"
 # ray_benchmark = "benchmark.benchmark_ray:main"
 # repeat_experiments = "benchmark.main:main"
 

@@ -10,7 +10,7 @@ import seaborn as sns
 from matplotlib import pyplot as plt
 from ast import literal_eval
 import optuna
-from terratorch_iterate.benchmark_types import Task
+from terratorch_iterate.iterate_types import Task
 from terratorch_iterate import plot_tools
 import sys
 from mlflow.entities.experiment import Experiment
@@ -32,6 +32,7 @@ DATA_PARTITIONS = {
     "0.10x_train": 10,
     "0.01x_train": 1,
 }
+
 
 def unflatten(dictionary: Dict[str, Any]):
     resultDict: Dict = {}
@@ -67,17 +68,20 @@ def sync_mlflow_optuna(
     Returns:
         task_run_id: run id of the task to be continued (if one exists) or None
     """
+    logger.info(
+        f"sync_mlflow_optuna - {optuna_db_path=} {storage_uri=} {task_run_id=} {experiment_name=} {task_run_id=}"
+    )
     # check number of successful mlflow runs in task
     client = mlflow.tracking.MlflowClient(tracking_uri=storage_uri)
     completed_in_mlflow_for_task = []
     all_mlflow_runs_for_task = []
     if task_run_id is not None:
         all_mlflow_runs_for_task.append(task_run_id)
-        logger.info(f"task_run_id : {task_run_id}")
+        logger.info(f"sync_mlflow_optuna - {task_run_id=}")
         experiment_info = client.get_experiment_by_name(experiment_name)
-        assert isinstance(
-            experiment_info, Experiment
-        ), f"Error! Unexpected type of {experiment_info=}"
+        assert isinstance(experiment_info, Experiment), (
+            f"Error! Unexpected type of {experiment_info=}"
+        )
         individual_run_data = client.search_runs(
             experiment_ids=[experiment_info.experiment_id],
             filter_string=f'tags."mlflow.parentRunId" LIKE "{task_run_id}"',
@@ -128,9 +132,9 @@ def sync_mlflow_optuna(
                 for item in all_mlflow_runs_for_task:
                     logger.info(f"deleting {item}")
                     client.delete_run(item)
-                    assert isinstance(
-                        experiment_info, Experiment
-                    ), f"Error! Unexpected type of {experiment_info=}"
+                    assert isinstance(experiment_info, Experiment), (
+                        f"Error! Unexpected type of {experiment_info=}"
+                    )
                     os.system(f"rm -r {experiment_info.artifact_location}/{item}")
                     task_run_id = None
     else:
@@ -139,11 +143,12 @@ def sync_mlflow_optuna(
             for item in all_mlflow_runs_for_task:
                 logger.info(f"deleting {item}")
                 client.delete_run(item)
-                assert isinstance(
-                    experiment_info, Experiment
-                ), f"Error! Unexpected type of {experiment_info=}"
+                assert isinstance(experiment_info, Experiment), (
+                    f"Error! Unexpected type of {experiment_info=}"
+                )
                 os.system(f"rm -r {experiment_info.artifact_location}/{item}")
             task_run_id = None
+    logging.info(f"sync_mlflow_optuna returns {task_run_id=}")
     return task_run_id
 
 
@@ -357,19 +362,19 @@ def extract_parameters(
             best_params["data_percentages"] = DATA_PARTITIONS[
                 best_params["partition_name"]
             ]
-            if 'optimizer_hparams' in best_params:
+            if "optimizer_hparams" in best_params:
                 logger.info(
                     f"optimizer_hparams: {best_params['optimizer_hparams'].items()}"
                 )
                 optimizer_hparams = {
-                    k: v for k, v in best_params['optimizer_hparams'].items()
+                    k: v for k, v in best_params["optimizer_hparams"].items()
                 }
                 best_params.update(optimizer_hparams)
-                del best_params['optimizer_hparams']
-            if 'model_args' in best_params:
-                model_args = {k: v for k, v in best_params['model_args'].items()}
+                del best_params["optimizer_hparams"]
+            if "model_args" in best_params:
+                model_args = {k: v for k, v in best_params["model_args"].items()}
                 best_params.update(model_args)
-                del best_params['model_args']
+                del best_params["model_args"]
 
             best_params = pd.DataFrame(best_params, index=[0])
             all_params.append(best_params)
@@ -404,7 +409,9 @@ def get_results_and_parameters(
         pd.DataFrame with results and parameters
     """
     if Path(storage_uri).exists() and Path(storage_uri).is_dir():
-        results_dir = Path(storage_uri).parents[0] / "summarized_results" / benchmark_name
+        results_dir = (
+            Path(storage_uri).parents[0] / "summarized_results" / benchmark_name
+        )
     else:
         print("Please use a valid directory for storage_uri")
         raise ValueError
@@ -428,11 +435,11 @@ def get_results_and_parameters(
         task_metrics=task_metrics,
     )
 
-    with open(f"{results_dir}/incomplete_experiments.txt", 'w') as f:
+    with open(f"{results_dir}/incomplete_experiments.txt", "w") as f:
         for line in incomplete_experiments:
             f.write(f"{line}\n")
     results_and_parameters = results.merge(
-        parameters, on=['experiment_name', 'dataset']
+        parameters, on=["experiment_name", "dataset"]
     )
     results_and_parameters.to_csv(
         f"{str(results_dir)}/results_and_parameters.csv", index=False
@@ -594,7 +601,7 @@ def check_existing_experiments(
     exp_parent_run_name: str,
     task_names: list,
     n_trials: int,
-    backbone: str
+    backbone: str,
 ) -> Dict[str, Any]:
     """
     checks if experiment has been completed (i.e. both task run and nested individual runs are complete)
@@ -797,24 +804,22 @@ def get_logger(log_level="INFO", log_folder="./experiment_logs") -> logging.Root
     handler = logging.FileHandler(log_file)
     handler.setLevel(log_level)
     formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     logging.basicConfig(level=logging.CRITICAL)
     return logger
 
+
 def import_custom_modules(
     logger: logging.RootLogger,
     custom_modules_path: str | Path | None = None,
 ) -> None:
-
     if custom_modules_path:
-
         custom_modules_path = Path(custom_modules_path)
 
         if custom_modules_path.is_dir():
-
             # Add 'custom_modules' folder to sys.path
             workdir = custom_modules_path.parents[0]
             module_dir = custom_modules_path.name
@@ -825,11 +830,16 @@ def import_custom_modules(
                 module = importlib.import_module(module_dir)
                 logger.info(f"Found {custom_modules_path}")
             except ImportError:
-                raise ImportError(f"It was not possible to import modules from {custom_modules_path}.")
+                raise ImportError(
+                    f"It was not possible to import modules from {custom_modules_path}."
+                )
         else:
-            raise ValueError(f"Modules path {custom_modules_path} isn't a directory. Check if you have defined it properly.")
+            raise ValueError(
+                f"Modules path {custom_modules_path} isn't a directory. Check if you have defined it properly."
+            )
     else:
         logger.debug("No custom module is being used.")
+
 
 if __name__ == "__main__":
     logger = get_logger()
