@@ -19,7 +19,7 @@ import logging
 from mlflow.tracking import MlflowClient
 from mlflow.entities import ViewType
 from collections import defaultdict
-
+import pdb
 
 
 N_TRIALS_DEFAULT = 16
@@ -215,7 +215,7 @@ def extract_repeated_experiment_results(
                 seed = int(run.info.run_name.split("_")[-1])
                 if task in task_info:
                     metric_name = task_info[task]
-                    metric_name = 'test_test/' + metric_name.split("/")[-1]
+                    metric_name = 'test_test/' + metric_name.split("/")[-1] if '/' in metric_name else 'test_test_' + metric_name.replace(metric_name.split('_')[0] + "_", '')
                 else:  
                     continue
 
@@ -278,7 +278,10 @@ def extract_repeated_experiment_results(
                 f"EXPERIMENT INCOMPLETE: {experiment_name} has {len(combine_task_results)} complete tasks only"
             )
             incomplete_experiments.append(experiment_name)
-    combine_exp_results = pd.concat(combine_exp_results, axis=0)
+    if len(combine_exp_results) > 0: 
+        combine_exp_results = pd.concat(combine_exp_results, axis=0)
+    else:
+        combine_exp_results = pd.DataFrame()
     print(f"\n\n\ncombine_exp_results: {combine_exp_results}")
     return (combine_exp_results, incomplete_experiments)
 
@@ -383,6 +386,7 @@ def get_results_and_parameters(
     task_metrics: list,
     task_names: list,
     num_repetitions: int = REPEATED_SEEDS_DEFAULT,
+    visualise: bool = True,
 ) -> pd.DataFrame:
     """
     extracts results and parameters for experiments from mlflow logs
@@ -395,6 +399,7 @@ def get_results_and_parameters(
         task_metrics: metrics used to evaluate each task
         task_names: list of tasks
         num_repetitions: number of repeated seeds per task
+        visualise: whether to visualise the summarised results or not
     Returns:
         pd.DataFrame with results and parameters
     """
@@ -432,6 +437,16 @@ def get_results_and_parameters(
     results_and_parameters.to_csv(
         f"{str(results_dir)}/results_and_parameters.csv", index=False
     )
+    
+    if visualise:
+
+        model_order = visualize_combined_results(
+            combined_results=results_and_parameters,
+            storage_uri=storage_uri,
+            logger=logger,
+            plot_file_base_name=f"summary_plot",
+        )
+
     return results_and_parameters
 
 
@@ -707,7 +722,6 @@ def visualize_combined_results(
     if not os.path.exists(plots_folder):
         os.makedirs(plots_folder)
 
-    combined_results = []
     model_order = []
     experiments = list(set(combined_results["experiment_name"]))
     combined_results = combined_results.rename(columns={"experiment_name": "model"})
@@ -719,63 +733,54 @@ def visualize_combined_results(
         zip(model_order, sns.color_palette("tab20", n_colors=len(model_order)))
     )
 
-    try:
-        # plot raw values
-        plot_tools.plot_per_dataset(
+    plot_tools.plot_per_dataset(
+        combined_results,
+        model_order=model_order,
+        aggregated_name=plot_file_base_name,
+        model_colors=model_colors,
+        metric="test metric",
+        sharey=False,
+        inner="points",
+        fig_size=fig_size,
+        n_legend_rows=n_legend_rows,
+    )
+    plt.savefig(
+        str(f"{plots_folder}/violin_{plot_file_base_name}_raw.png"),
+        bbox_inches="tight",
+    )
+    plt.close()
+
+    # plot normalized, bootstrapped values values
+    plot_tools.make_normalizer(
+        combined_results,
+        metrics=("test metric",),
+        benchmark_name=plots_folder,
+    )
+
+    tmp = (
+        plot_tools.normalize_bootstrap_and_plot(
             combined_results,
-            model_order=model_order,
-            plot_file_base_name=plot_file_base_name,
-            model_colors=model_colors,
+            # plot_file_base_name=plot_file_base_name,
             metric="test metric",
-            sharey=False,
-            inner="points",
+            benchmark_name=plots_folder,
+            model_order=model_order,
+            model_colors=model_colors,
             fig_size=fig_size,
             n_legend_rows=n_legend_rows,
         )
-        plt.savefig(
-            str(plots_folder / f"violin_{plot_file_base_name}_raw.png"),
-            bbox_inches="tight",
-        )
-        plt.close()
+    )
 
-        # plot normalized, bootstrapped values values
-        plot_tools.make_normalizer(
-            combined_results,
-            metrics=("test metric",),
-            benchmark_name=plot_file_base_name,
-        )
-        bootstrapped_iqm, normalized_combined_results = (
-            plot_tools.normalize_bootstrap_and_plot(
-                combined_results,
-                plot_file_base_name=plot_file_base_name,
-                metric="test metric",
-                benchmark_name=plot_file_base_name,
-                model_order=model_order,
-                model_colors=model_colors,
-                fig_size=fig_size,
-                n_legend_rows=n_legend_rows,
-            )
-        )
-        # dataset_name_map=dataset_name_map)
+    plt.savefig(
+        str(f"{plots_folder}/violin_{plot_file_base_name}_normalized_bootstrapped.png"
+        ),
+        bbox_inches="tight",
+    )
+    plt.close()
 
-        plt.savefig(
-            str(
-                plots_folder
-                / f"violin_{plot_file_base_name}_normalized_bootstrapped.png"
-            ),
-            bbox_inches="tight",
+    combined_results.to_csv(
+        str(f"{tables_folder}/{plot_file_base_name}_normalized_combined_results.csv"
         )
-        plt.close()
-        bootstrapped_iqm.to_csv(
-            str(tables_folder / f"{plot_file_base_name}_bootstrapped_iqm.csv")
-        )
-        combined_results.to_csv(
-            str(
-                tables_folder / f"{plot_file_base_name}_normalized_combined_results.csv"
-            )
-        )
-    except Exception as e:
-        logger.info(f"could not visualize due to error: {e}")
+    )
 
 
 def get_logger(log_level="INFO", log_folder="./experiment_logs") -> logging.RootLogger:
@@ -843,11 +848,9 @@ if __name__ == "__main__":
     )
 
     settings_per_model = [
-        "early_stopping_10_data_100_perc",
-        "early_stopping_50_data_10_perc",
-        "early_stopping_50_data_100_perc",
+        "detection",
     ]
-
+    
     # create box plots across multiple models
     for setting in settings_per_model:
         combined_results = results_and_parameters.loc[
