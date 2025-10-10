@@ -55,7 +55,7 @@ from terratorch.tasks import PixelwiseRegressionTask, SemanticSegmentationTask
 from torchgeo.datamodules import BaseDataModule
 from torchgeo.trainers import BaseTask
 
-from benchmark.benchmark_types import (
+from terratorch_iterate.benchmark_types import (
     ParameterBounds,
     ParameterTypeEnum,
     TrainingSpec,

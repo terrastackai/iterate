@@ -25,13 +25,13 @@ from terratorch.tasks import PixelwiseRegressionTask, SemanticSegmentationTask
 from lightning.pytorch.loggers.mlflow import MLFlowLogger
 import time
 import pdb
-from benchmark.benchmark_types import (
+from terratorch_iterate.benchmark_types import (
     Defaults,
     Task,
     TrainingSpec,
     combine_with_defaults,
 )
-from benchmark.model_fitting import (
+from terratorch_iterate.model_fitting import (
     get_default_callbacks,
     inject_hparams,
     valid_task_types,

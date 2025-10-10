@@ -3,10 +3,10 @@ import uuid
 from pathlib import Path
 from typing import Any, List
 from jsonargparse import ArgumentParser
-from benchmark.backbone_benchmark import benchmark_backbone
-from benchmark.benchmark_types import Defaults, Task
-from benchmark.repeat_best_experiment import rerun_best_from_backbone
-from benchmark.utils import (get_logger, import_custom_modules,
+from terratorch_iterate.backbone_benchmark import benchmark_backbone
+from terratorch_iterate.benchmark_types import Defaults, Task
+from terratorch_iterate.repeat_best_experiment import rerun_best_from_backbone
+from terratorch_iterate.utils import (get_logger, import_custom_modules,
                              get_results_and_parameters, extract_parameters)
 
 def main():

@@ -17,16 +17,16 @@ from optuna.pruners import HyperbandPruner
 from optuna.samplers import BaseSampler, RandomSampler
 from tabulate import tabulate
 import pickle
-from benchmark.benchmark_types import (
+from terratorch_iterate.benchmark_types import (
     Defaults,
     ParameterBounds,
     Task,
     combine_with_defaults,
     optimization_space_type,
 )
-from benchmark.model_fitting import fit_model, fit_model_with_hparams
-from benchmark.repeat_best_experiment import rerun_best_from_backbone
-from benchmark.utils import (
+from terratorch_iterate.model_fitting import fit_model, fit_model_with_hparams
+from terratorch_iterate.repeat_best_experiment import rerun_best_from_backbone
+from terratorch_iterate.utils import (
     check_existing_task_parent_runs,
     check_existing_experiments,
     unflatten,
