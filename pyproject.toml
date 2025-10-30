@@ -8,13 +8,13 @@ requires = ["setuptools >= 77.0.3"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["benchmark*"]
+include = ["terratorch_iterate*"]
 
 [project]
 
 name = "terratorch-iterate"
-version = "0.2.0"
-requires-python = ">= 3.10"
+version = "0.2.2rc1"
+requires-python = ">= 3.11"
 description = "A terratorch's plugin for benchmarking and hyperparameter optimization"
 authors = [
       { name = "Carlos Gomes"},
@@ -61,6 +61,7 @@ dependencies = [
 "more-itertools", 
 "importlib-metadata",
 "numpy",
+"mlflow",
 "optuna",
 "types-tabulate",
 "ray",
@@ -69,7 +70,6 @@ dependencies = [
 "opencv-python-headless",
 "configspace",
 "optuna-integration",
-"seaborn",
 "psutil",
 "tabulate>=0.9.0",
 ]
@@ -86,7 +86,8 @@ dev = [
   "mkdocstrings[python]",
   "mike", # for building docs with versions
   "tox",
-  "pre-commit"
+  "pre-commit",
+  "seaborn"
 ]
 
 test = [

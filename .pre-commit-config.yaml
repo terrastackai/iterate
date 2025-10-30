@@ -10,9 +10,10 @@ repos:
     # You are encouraged to use static refs such as tags, instead of branch name
     #
     # Running "pre-commit autoupdate" automatically updates rev to latest tag
-    rev: 0.13.1+ibm.61.dss
+    rev: 0.13.1+ibm.62.dss
     hooks:
       - id: detect-secrets # pragma: whitelist secret
+        additional_dependencies: [boxsdk<4]
         # Add options for detect-secrets-hook binary. You can run `detect-secrets-hook --help` to list out all possible options.
         # You may also run `pre-commit run detect-secrets` to preview the scan result.
         # when "--baseline" without "--use-all-plugins", pre-commit scan with just plugins in baseline file
@@ -20,9 +21,17 @@ repos:
         # add "--fail-on-unaudited" to fail pre-commit for unaudited potential secrets
         args: [--baseline, .secrets.baseline, --use-all-plugins]
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.12.3
+    # Ruff version.
+    rev: v0.14.2
     hooks:
+      # Run the linter.
+      - id: ruff-check
+        types_or: [ python, pyi ]
+        args: [ --fix ]
+      # Run the formatter.
       - id: ruff-format
-        types_or:
-          - python
-          - jupyter
+        types_or: [ python, pyi ]
+  - repo: https://github.com/mattlqx/pre-commit-sign
+    rev: v1.2.0
+    hooks:
+    - id: sign-commit

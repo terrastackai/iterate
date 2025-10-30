@@ -75,28 +75,33 @@ If users want to optimize hyperparameters:
 terratorch iterate --hpo --config <config-file>
 ```
 
+Another way to run terratorch-iterate is to omit `terratorch` by running:
+```shell
+iterate --hpo --config <config-file>
+```
+
 For instance:
 ```shell
-terratorch iterate --hpo --config configs/dofa_large_patch16_224_upernetdecoder_true_modified.yaml
+iterate --hpo --config configs/dofa_large_patch16_224_upernetdecoder_true_modified.yaml
 ```
 
 
 If users want to rerun best experiment, please use the same config file. Additionally, the `parent_run_id`, which is the mlflow run id from optimization, should be added as shown below:
 ```shell
-terratorch iterate --repeat --config <config-file> --parent_run_id <mlflow run_id from hpo>
+iterate --repeat --config <config-file> --parent_run_id <mlflow run_id from hpo>
 ```
 For instance:
 ```shell
-terratorch iterate --repeat --config configs/dofa_large_patch16_224_upernetdecoder_true_modified.yaml --parent_run_id 61bdee4a35a94f988ad30c46c87d4fbd
+iterate --repeat --config configs/dofa_large_patch16_224_upernetdecoder_true_modified.yaml --parent_run_id 61bdee4a35a94f988ad30c46c87d4fbd
 ```
 
 If users want to optimize hyperparameters then the rerun best experiment in a single command, please use both settings as shown below:
 ```shell
-terratorch iterate --hpo --repeat --config <config-file>
+iterate --hpo --repeat --config <config-file>
 ```
 For instance:
 ```shell
-terratorch iterate --hpo --repeat --config configs/dofa_large_patch16_224_upernetdecoder_true_modified.yaml
+iterate --hpo --repeat --config configs/dofa_large_patch16_224_upernetdecoder_true_modified.yaml
 ```
 
 To check the experiment results, use `mlflow ui --host $(hostname -f) --port <port> --backend-store-uri <storage_uri>` 
@@ -121,11 +126,11 @@ See `configs/summarize_results_template.yaml` in the git repo for an example.
 
 To summarize results and hyperparameters, please run the following: 
 ```shell
-terratorch iterate --summarize --config <summarize-config-file>
+iterate --summarize --config <summarize-config-file>
 ```
 For instance:
 ```shell
-terratorch iterate --summarize --config configs/summarize_results.yaml
+iterate --summarize --config configs/summarize_results.yaml
 ```
 
 The results and hyperparameters are extracted into a csv file. For example, if `storage_uri` is `/opt/benchmark_experiments/hpo`, then sumarized results will be saved in last file as shown below:
