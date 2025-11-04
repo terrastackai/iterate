@@ -72,7 +72,7 @@ dependencies = [
 "optuna-integration",
 "psutil",
 "tabulate>=0.9.0",
-"torch<=2.2.2",
+"torch",
 "seaborn"
 ]
 
@@ -94,7 +94,8 @@ dev = [
 test = [
   "coverage",
   "pytest",
-  "pytest-cov"
+  "pytest-cov",
+  "deepdiff"
 ]
 
 utility = [

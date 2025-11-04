@@ -6,7 +6,7 @@ from ast import Dict
 import copy
 import enum
 from dataclasses import dataclass, field, replace
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, TYPE_CHECKING
 from terratorch.tasks import (
     ClassificationTask,
     MultiLabelClassificationTask,
@@ -15,6 +15,20 @@ from terratorch.tasks import (
     ObjectDetectionTask,
 )
 from torchgeo.datamodules import BaseDataModule
+
+import logging
+
+try:
+    from geobench_v2.datamodules import GeoBenchDataModule
+    GEOBENCH_AVAILABLE = True
+except ImportError:
+    GeoBenchDataModule = None  # type: ignore
+    GEOBENCH_AVAILABLE = False
+    logging.getLogger("terratorch").debug("geobench_v2 not installed")
+    
+
+if TYPE_CHECKING:
+    from geobench_v2.datamodules import GeoBenchDataModule
 
 valid_task_types = type[
     SemanticSegmentationTask
@@ -129,7 +143,7 @@ class Task:
 
     name: str
     type: TaskTypeEnum = field(repr=False)
-    datamodule: BaseDataModule = field(repr=False)
+    datamodule: Union[BaseDataModule, "GeoBenchDataModule"] = field(repr=False)
     direction: str
     terratorch_task: Optional[dict[str, Any]] = None
     metric: str = "val/loss"
