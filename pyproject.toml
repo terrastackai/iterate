@@ -94,7 +94,8 @@ dev = [
 test = [
   "coverage",
   "pytest",
-  "pytest-cov"
+  "pytest-cov",
+  "deepdiff"
 ]
 
 utility = [
