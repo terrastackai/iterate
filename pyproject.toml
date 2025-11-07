@@ -29,9 +29,9 @@ license = { "text" = "Apache License, Version 2.0" }
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
   "Programming Language :: Python",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: Implementation :: CPython",
 ]
 readme = "README.md"
@@ -60,7 +60,7 @@ dependencies = [
 "pytorch-lightning>=2.3.3",
 "more-itertools", 
 "importlib-metadata",
-"numpy>=2.3.4",
+"numpy",
 "mlflow",
 "optuna",
 "types-tabulate",
@@ -72,10 +72,8 @@ dependencies = [
 "optuna-integration",
 "psutil",
 "tabulate>=0.9.0",
-# torch vulnerability
-"torch>=2.8.0",
-"seaborn",
-"scipy>=1.16.0"
+"torch",
+"seaborn==0.13.2"
 ]
 
 [project.urls]
@@ -85,10 +83,6 @@ Issues = "https://github.com/IBM/terratorch-iterate/issues"
 [project.optional-dependencies]
 dev = [
   "ruff",
-  "flake8", 
-  "mkdocs-material",
-  "mkdocstrings[python]",
-  "mike", # for building docs with versions
   "tox",
   "pre-commit",
   ]

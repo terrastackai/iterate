@@ -20,12 +20,13 @@ import logging
 
 try:
     from geobench_v2.datamodules import GeoBenchDataModule
+
     GEOBENCH_AVAILABLE = True
 except ImportError:
     GeoBenchDataModule = None  # type: ignore
     GEOBENCH_AVAILABLE = False
     logging.getLogger("terratorch").debug("geobench_v2 not installed")
-    
+
 
 if TYPE_CHECKING:
     from geobench_v2.datamodules import GeoBenchDataModule

@@ -52,9 +52,9 @@ RUN pip3.13 install --upgrade pip
 
 CMD ["python3.13"]
 WORKDIR /app
-COPY . /app/
+COPY dist /app/dist
 # RUN pip3.13 install scipy -U
-RUN pip3.13 install -e .
+# RUN pip3.13 install -e .
 
 # RUN python3 -m pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ terratorch-iterate==0.2.2rc3
 
