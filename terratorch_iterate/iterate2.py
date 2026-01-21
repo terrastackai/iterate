@@ -135,7 +135,7 @@ def build_launcher_command(
 
     if wlm == "slurm":
         return (
-            f"srun --gres=gpu:1 --cpus-per-task=4 --mem=128G "
+            f"srun --gres=gpu:{gpu_count} --cpus-per-task={cpu_count} --mem={mem_gb}G "
             f"--job-name=hpo_trial_{trial_id} "
             f"--output={out_file} --error={err_file} "
             f"bash -c \"{cmd}\""
