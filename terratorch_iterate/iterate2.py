@@ -116,13 +116,22 @@ def build_launcher_command(
     mem_gb: int = 128,
 ):
     if wlm == "lsf":
-        return (
-            f"bsub -gpu num={gpu_count} -K "
-            f"-o {out_file} -e {err_file} "
-            f"-R \"rusage[ngpus={gpu_count}, cpu={cpu_count}, mem={mem_gb}GB]\" "
-            f"-J hpo_trial_{trial_id} "
-            f"\"{cmd}\""
-        )
+        if gpu_count > 1:
+            return (
+                f"bsub -gpu num={gpu_count} -K "
+                f"-o {out_file} -e {err_file} "
+                f"-R \"rusage[ngpus={gpu_count}, cpu={cpu_count}, mem={mem_gb}GB]\" "
+                f"-J hpo_trial_{trial_id} "
+                f"\"{cmd}\""
+            )
+        else:
+            return (
+                f"bsub -K "
+                f"-o {out_file} -e {err_file} "
+                f"-R \"rusage[cpu={cpu_count}, mem={mem_gb}GB]\" "
+                f"-J hpo_trial_{trial_id} "
+                f"\"{cmd}\""
+            )
 
     if wlm == "slurm":
         return (
