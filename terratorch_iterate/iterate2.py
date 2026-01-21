@@ -182,6 +182,7 @@ def build_shell_command(
         # Convert parameter names to lowercase CLI argument names
         # e.g., "BATCH_SIZE" -> "--batch-size", "batch_size" -> "--batch-size"
         #arg_name = key.lower().replace("_", "-")
+        arg_name = key.replace("_", "-")
         
         # Handle boolean flags
         if isinstance(value, bool):
