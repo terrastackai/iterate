@@ -26,6 +26,7 @@ def parse_args():
     parser.add_argument("--script", required=True, help="Training script to execute")
     parser.add_argument("--root-dir", default=None, help="Root dir (derived if omitted)")
     parser.add_argument("--venv", default=".venv", help="Virtualenv dir, default: .venv (set empty to disable)")
+    parser.add_argument("--interpreter", default="python", help="Interpreter to use, default: python")
     parser.add_argument(
         "--wlm",
         choices=["lsf", "slurm", "openshift", "none"],
@@ -95,9 +96,9 @@ def resolve_paths(script: str, root_dir: Optional[str]):
     script_path = Path(script).resolve()
 
     if root_dir is None:
-        root_dir = script_path.parent.parent
+        root_dir = '.'
 
-    return script_path, Path(root_dir).resolve()
+    return script, Path(root_dir).resolve()
 
 
 # ============================================================
@@ -156,6 +157,7 @@ def build_launcher_command(
 
 def build_shell_command(
     *,
+    interpreter: str = "python",
     root_dir: Path,
     script_path: Path,
     venv: Optional[str],
@@ -176,26 +178,26 @@ def build_shell_command(
         parts.append(f"source {venv}/bin/activate")
 
     # Build the python command with arguments
-    arg_list = [f"python {script_path}"]
+    arg_list = [f"{interpreter} {script_path}"]
     
     for key, value in script_args.items():
-        # Convert parameter names to lowercase CLI argument names
-        # e.g., "BATCH_SIZE" -> "--batch-size", "batch_size" -> "--batch-size"
-        #arg_name = key.lower().replace("_", "-")
+        if key == "value_only":
+            arg_list.append(str(value))
+            continue
+
         arg_name = key.replace("_", "-")
-        
-        # Handle boolean flags
+
         if isinstance(value, bool):
             if value:
                 arg_list.append(f"--{arg_name}")
-        # Handle string "False"/"True" from YAML/JSON
         elif isinstance(value, str) and value.lower() in ("false", "true"):
             if value.lower() == "true":
                 arg_list.append(f"--{arg_name}")
         else:
             arg_list.append(f"--{arg_name} {value}")
-    
+
     parts.append(" ".join(arg_list))
+
 
     return " && ".join(parts)
 
@@ -213,11 +215,9 @@ def load_hpo_space(args) -> Dict[str, Any]:
         with open(args.hpo_yaml, "r") as f:
             data = yaml.safe_load(f)
     
-    # If the YAML has an 'hpo' section, use only that. 
-    # Otherwise, assume the whole file is the HPO space.
     if isinstance(data, dict) and "hpo" in data:
         return data["hpo"]
-    return data
+    return {}
 
 def load_static_args(args) -> Dict[str, Any]:
     """Load static arguments."""
@@ -287,10 +287,9 @@ def suggest_from_spec(trial, name: str, spec: Dict[str, Any]):
 # METRIC EXTRACTION
 # ============================================================
 
-
 def extract_metric_from_log(path, metric: str):
     pattern = re.compile(
-        rf"{re.escape(metric)}\s*[: ]\s*([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)"
+        rf"{re.escape(metric)}\s*[:=]\s*([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)"
     )
 
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -301,7 +300,7 @@ def extract_metric_from_log(path, metric: str):
     if not matches:
         raise RuntimeError(f"Metric '{metric}' not found in {path}")
 
-    return float(matches[0])
+    return float(matches[-1])
 
 
 # ============================================================
@@ -325,7 +324,7 @@ def main():
             script_args[name] = suggest_from_spec(trial, name, spec)
 
         # Add trial number
-        script_args["trial_number"] = trial.number
+        #script_args["trial_number"] = trial.number
 
         # Log file paths
         out_file = f"trial_{trial.number}.out"
@@ -334,6 +333,7 @@ def main():
         # Build command
         shell_cmd = build_shell_command(
             root_dir=root_dir,
+            interpreter=args.interpreter,
             script_path=script_path,
             venv=args.venv if args.venv else None,
             script_args=script_args,
