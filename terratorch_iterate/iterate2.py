@@ -28,6 +28,18 @@ def parse_args():
     parser.add_argument("--venv", default=".venv", help="Virtualenv dir, default: .venv (set empty to disable)")
     parser.add_argument("--interpreter", default="python", help="Interpreter to use, default: python")
     parser.add_argument(
+        "--param-setter",
+        type=str,
+        default=None,
+        help=(
+            "When the target script uses a setter-style interface instead of named flags, "
+            "provide the setter flag name here (e.g. 'set'). "
+            "Each parameter will then be passed as '--<setter> key value' "
+            "instead of the default '--key value' style. "
+            "Example: --param-setter set  →  --set learning_rate 0.001 --set batch_size 32"
+        ),
+    )
+    parser.add_argument(
         "--wlm",
         choices=["lsf", "slurm", "openshift", "none"],
         default="none",
@@ -36,6 +48,17 @@ def parse_args():
     parser.add_argument("--gpu-count", type=int, default=1, help="GPUs per trial")
     parser.add_argument("--cpu-count", type=int, default=4, help="CPUs per trial")
     parser.add_argument("--mem-gb", type=int, default=128, help="Memory (GB) per trial")
+    parser.add_argument(
+        "--lsf-gpu-config-string",
+        type=str,
+        default=None,
+        help=(
+            "Optional LSF -gpu option string, e.g. "
+            "'num=1:mode=exclusive_process:mps=yes:gmodel=NVIDIAA100_SXM4_80GB'. "
+            "When set, it is passed verbatim as -gpu \"<string>\" in the bsub command "
+            "and overrides the default --gpu-count-based -gpu flag."
+        ),
+    )
 
     # ------------------------
     # Optuna config
@@ -115,11 +138,19 @@ def build_launcher_command(
     gpu_count: int = 1,
     cpu_count: int = 4,
     mem_gb: int = 128,
+    lsf_gpu_config_string: Optional[str] = None,
 ):
     if wlm == "lsf":
-        if gpu_count > 1:
+        if lsf_gpu_config_string is not None:
+            gpu_fragment = f"-gpu \"{lsf_gpu_config_string}\""
+        elif gpu_count > 0:
+            gpu_fragment = f"-gpu num={gpu_count}"
+        else:
+            gpu_fragment = ""
+
+        if gpu_fragment:
             return (
-                f"bsub -gpu num={gpu_count} -K "
+                f"bsub {gpu_fragment} -K "
                 f"-o {out_file} -e {err_file} "
                 f"-R \"rusage[ngpus={gpu_count}, cpu={cpu_count}, mem={mem_gb}GB]\" "
                 f"-J hpo_trial_{trial_id} "
@@ -162,15 +193,19 @@ def build_shell_command(
     script_path: Path,
     venv: Optional[str],
     script_args: Dict[str, Any],
+    param_setter: Optional[str] = None,
 ):
     """
     Build shell command for argparse-based scripts.
-    
+
     Args:
         root_dir: Root directory to cd into
         script_path: Path to the Python script
         venv: Virtual environment directory (optional)
         script_args: Dictionary of argument name -> value for the script
+        param_setter: When set, use '--<setter> key value' style instead of
+            '--key value'.  E.g. param_setter='set' produces
+            '--set learning_rate 0.001' instead of '--learning-rate 0.001'.
     """
     parts = [f"cd {root_dir}"]
 
@@ -179,25 +214,38 @@ def build_shell_command(
 
     # Build the python command with arguments
     arg_list = [f"{interpreter} {script_path}"]
-    
+
     for key, value in script_args.items():
         if key == "value_only":
             arg_list.append(str(value))
             continue
 
-        arg_name = key.replace("_", "-")
+        if param_setter is not None:
+            # Setter style: --<setter> key value  (booleans passed explicitly)
+            bool_value = None
+            if isinstance(value, bool):
+                bool_value = value
+            elif isinstance(value, str) and value.lower() in ("false", "true"):
+                bool_value = value.lower() == "true"
 
-        if isinstance(value, bool):
-            if value:
-                arg_list.append(f"--{arg_name}")
-        elif isinstance(value, str) and value.lower() in ("false", "true"):
-            if value.lower() == "true":
-                arg_list.append(f"--{arg_name}")
+            if bool_value is not None:
+                arg_list.append(f"--{param_setter} {key} {str(bool_value).lower()}")
+            else:
+                arg_list.append(f"--{param_setter} {key} {value}")
         else:
-            arg_list.append(f"--{arg_name} {value}")
+            # Default style: --key value
+            arg_name = key.replace("_", "-")
+
+            if isinstance(value, bool):
+                if value:
+                    arg_list.append(f"--{arg_name}")
+            elif isinstance(value, str) and value.lower() in ("false", "true"):
+                if value.lower() == "true":
+                    arg_list.append(f"--{arg_name}")
+            else:
+                arg_list.append(f"--{arg_name} {value}")
 
     parts.append(" ".join(arg_list))
-
 
     return " && ".join(parts)
 
@@ -337,6 +385,7 @@ def main():
             script_path=script_path,
             venv=args.venv if args.venv else None,
             script_args=script_args,
+            param_setter=args.param_setter,
         )
 
         launcher_cmd = build_launcher_command(
@@ -348,6 +397,7 @@ def main():
             gpu_count=args.gpu_count,
             cpu_count=args.cpu_count,
             mem_gb=args.mem_gb,
+            lsf_gpu_config_string=args.lsf_gpu_config_string,
         )
 
         # Execute trial
