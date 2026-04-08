@@ -36,6 +36,13 @@ def parse_args():
     parser.add_argument("--cpu-count", type=int, default=4)
     parser.add_argument("--mem-gb", type=int, default=128)
     parser.add_argument("--lsf-gpu-config-string", type=str, default=None)
+    parser.add_argument(
+        "--no-underscore-to-hyphen",
+        dest="underscore_to_hyphen",
+        action="store_false",
+        default=True,
+        help="Do not convert underscores to hyphens in arg names (default: convert)",
+    )
 
     # ------------------------
     # Optuna config
@@ -98,14 +105,14 @@ def build_launcher_command(wlm, cmd, trial_id, out_file, err_file, gpu_count, cp
     logger.debug("Launcher command: %s", launcher)
     return launcher
 
-def build_shell_command(interpreter, root_dir, script_path, venv, script_args, param_setter):
+def build_shell_command(interpreter, root_dir, script_path, venv, script_args, param_setter, underscore_to_hyphen=True):
     parts = [f"cd {root_dir}"]
     if venv:
         parts.append(f"source {venv}/bin/activate")
         logger.debug("Activating venv: %s", venv)
     arg_list = [f"{interpreter} {script_path}"]
     for key, value in script_args.items():
-        arg_name = key.replace("_", "-")
+        arg_name = key.replace("_", "-") if underscore_to_hyphen else key
         if value is None:
             logger.debug("Skipping arg '%s': value is None (flag omitted)", key)
             continue
@@ -248,7 +255,7 @@ def main():
         err_file = f"trial_{trial.number}.err"
         logger.debug("Trial %d: stdout → %s | stderr → %s", trial.number, out_file, err_file)
 
-        shell_cmd = build_shell_command(args.interpreter, root_dir, script_path, args.venv, script_args, args.param_setter)
+        shell_cmd = build_shell_command(args.interpreter, root_dir, script_path, args.venv, script_args, args.param_setter, args.underscore_to_hyphen)
         launcher_cmd = build_launcher_command(args.wlm, shell_cmd, trial.number, out_file, err_file, gpu_count, args.cpu_count, args.mem_gb, args.lsf_gpu_config_string)
 
         logger.info("Trial %d: submitting → %s", trial.number, launcher_cmd)
