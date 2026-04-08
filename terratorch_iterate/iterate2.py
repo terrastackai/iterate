@@ -85,11 +85,18 @@ def build_shell_command(interpreter, root_dir, script_path, venv, script_args, p
     arg_list = [f"{interpreter} {script_path}"]
     for key, value in script_args.items():
         arg_name = key.replace("_", "-")
+        if value is None:
+            continue  # None means "omit this flag" (e.g. compile: null disables --compile)
         if param_setter:
-            arg_list.append(f"--{param_setter} {key} {value}")
+            if isinstance(value, bool):
+                if value: arg_list.append(f"--{param_setter} {key}")
+                # False → omit entirely
+            else:
+                arg_list.append(f"--{param_setter} {key} {value}")
         else:
             if isinstance(value, bool):
                 if value: arg_list.append(f"--{arg_name}")
+                # False → flag is simply absent
             else:
                 arg_list.append(f"--{arg_name} {value}")
     parts.append(" ".join(arg_list))
@@ -139,6 +146,12 @@ def suggest_from_spec(trial, name, spec):
     if t == "float": return trial.suggest_float(name, float(spec["low"]), float(spec["high"]), log=spec.get("log", False))
     if t == "int": return trial.suggest_int(name, int(spec["low"]), int(spec["high"]), log=spec.get("log", False))
     if t == "categorical": return trial.suggest_categorical(name, spec["choices"])
+    if t == "flag":
+        # store_true style: True → --name present, False → flag omitted entirely
+        return trial.suggest_categorical(name, [True, False])
+    if t == "group":
+        # Suggests one of the named group keys; caller expands the key → dict of args
+        return trial.suggest_categorical(name, list(spec["choices"].keys()))
     raise ValueError(f"Unknown param type: {t}")
 
 def main():
@@ -152,13 +165,21 @@ def main():
     def objective(trial):
         script_args = static_args.copy()
         for name, spec in hpo_space.items():
-            script_args[name] = suggest_from_spec(trial, name, spec)
+            val = suggest_from_spec(trial, name, spec)
+            if spec["type"] == "group":
+                # Expand the chosen group's key→value pairs directly into script_args
+                script_args.update(spec["choices"][val])
+            else:
+                script_args[name] = val
+
+        # gpu_num in hpo/static overrides the CLI --gpu-count for this trial's launcher
+        gpu_count = int(script_args.pop("gpu_num", args.gpu_count))
 
         out_file = f"trial_{trial.number}.out"
         err_file = f"trial_{trial.number}.err"
 
         shell_cmd = build_shell_command(args.interpreter, root_dir, script_path, args.venv, script_args, args.param_setter)
-        launcher_cmd = build_launcher_command(args.wlm, shell_cmd, trial.number, out_file, err_file, args.gpu_count, args.cpu_count, args.mem_gb, args.lsf_gpu_config_string)
+        launcher_cmd = build_launcher_command(args.wlm, shell_cmd, trial.number, out_file, err_file, gpu_count, args.cpu_count, args.mem_gb, args.lsf_gpu_config_string)
 
         print(f"Trial {trial.number}: Running...")
         subprocess.run(launcher_cmd, shell=True, check=True)

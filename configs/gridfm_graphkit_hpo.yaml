@@ -1,0 +1,47 @@
+# HPO configuration for gridfm-graphkit HGNS PF case2000
+#
+# Hyperparameters:
+#   gpu_num   – number of GPUs to request from the WLM (launcher-level)
+#   bfloat16  – boolean flag (presence = --bfloat16, absence = flag omitted)
+#   tf32      – boolean flag (presence = --tf32, absence = flag omitted)
+#   compile   – torch.compile mode; null disables the flag entirely
+#   dataset   – group: selects config + data_path + exp_name together
+#
+# Static args:
+#   all other fixed CLI args
+
+hpo:
+  gpu_num:
+    type: categorical
+    choices: [1, 2, 4]
+
+  bfloat16:
+    type: flag               # store_true: true → --bfloat16, false → flag omitted
+
+  tf32:
+    type: flag               # store_true: true → --tf32, false → flag omitted
+
+  compile:
+    type: categorical
+    choices: ["max-autotune", "default", "reduce-overhead", null]
+    # null → --compile flag is omitted entirely
+
+  dataset:
+    type: group             # one choice selects all bundled args together
+    choices:
+      case2000:
+        config: ./examples/config/HGNS_PF_datakit_case2000.yaml
+        data_path: /dccstor/gridfm/powermodels_data/v4/finetuning/pf/
+        exp_name: case2000
+      case1000:
+        config: ./examples/config/HGNS_PF_datakit_case1000.yaml
+        data_path: /dccstor/gridfm/powermodels_data/v4/finetuning/pf/
+        exp_name: case1000
+
+static:
+  run_name: run1
+  log_dir: logs
+  dataset_wrapper: SharedMemoryCacheDataset
+  plugins: gridfm_graphkit_ee
+  num_workers: 32
+  dataset_wrapper_cache_dir: /dccstor/terratorch/case2000_ieeecache
