@@ -5,7 +5,9 @@ import json
 import logging
 import os
 import subprocess
+import sys
 import re
+import threading
 from pathlib import Path
 from typing import Dict, Any, Optional, Literal, List
 
@@ -36,6 +38,15 @@ def parse_args():
     parser.add_argument("--cpu-count", type=int, default=4)
     parser.add_argument("--mem-gb", type=int, default=128)
     parser.add_argument("--lsf-gpu-config-string", type=str, default=None)
+    parser.add_argument(
+        "--parallelism",
+        type=int,
+        default=1,
+        help="Number of trials to run in parallel (default: 1 = sequential). "
+             "Each parallel trial runs in its own thread. "
+             "For SQLite storage, values >4 may cause locking contention; "
+             "consider PostgreSQL for high parallelism.",
+    )
     parser.add_argument(
         "--no-underscore-to-hyphen",
         dest="underscore_to_hyphen",
@@ -99,7 +110,9 @@ def build_launcher_command(wlm, cmd, trial_id, out_file, err_file, gpu_count, cp
     elif wlm == "slurm":
         launcher = f"srun --gres=gpu:{gpu_count} --cpus-per-task={cpu_count} --mem={mem_gb}G --job-name=hpo_trial_{trial_id} --output={out_file} --error={err_file} bash -c \"{cmd}\""
     elif wlm == "none":
-        launcher = f'bash -c "{cmd} > {out_file} 2> {err_file}"'
+        # No embedded redirect: run_and_stream() captures stdout/stderr via PIPE
+        # and writes to out_file/err_file itself.
+        launcher = f'bash -c "{cmd}"'
     else:
         raise ValueError(f"Unknown WLM: {wlm}")
     logger.debug("Launcher command: %s", launcher)
@@ -139,6 +152,84 @@ def build_shell_command(interpreter, root_dir, script_path, venv, script_args, p
     cmd = " && ".join(parts + [" ".join(arg_list)])
     logger.debug("Shell command: %s", cmd)
     return cmd
+
+# ============================================================
+# PARALLEL STREAMING RUNNER
+# ============================================================
+
+_print_lock = threading.Lock()
+
+def _stream_pipe(pipe, dest_file, trial_id: int, stream_name: str, dest_stream):
+    """Read lines from *pipe*, write to *dest_file* and print prefixed to *dest_stream*."""
+    prefix = f"[trial-{trial_id}]"
+    with open(dest_file, "w", encoding="utf-8", errors="replace") as fh:
+        for raw in pipe:
+            line = raw.decode("utf-8", errors="replace")
+            fh.write(line)
+            fh.flush()
+            with _print_lock:
+                dest_stream.write(f"{prefix} {line}")
+                dest_stream.flush()
+
+def run_and_stream(launcher_cmd: str, trial_id: int, out_file: str, err_file: str, wlm: str):
+    """
+    Run *launcher_cmd* in a shell.
+
+    For ``wlm='none'``: captures stdout and stderr via PIPE, streams every line
+    to the main process stdout/stderr (prefixed with ``[trial-N]``), and also
+    writes them to *out_file* / *err_file* for later metric extraction.
+
+    For WLM backends (lsf, slurm, …): the WLM tool itself manages the output
+    files on the cluster.  The local subprocess output (WLM status messages,
+    errors) is still streamed with the same prefix so parallel workers are
+    distinguishable.
+    """
+    logger.debug("Trial %d: run_and_stream wlm=%s cmd=%s", trial_id, wlm, launcher_cmd)
+    proc = subprocess.Popen(
+        launcher_cmd,
+        shell=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    if wlm == "none":
+        # Full capture: write to files AND stream to console
+        t_out = threading.Thread(
+            target=_stream_pipe,
+            args=(proc.stdout, out_file, trial_id, "stdout", sys.stdout),
+            daemon=True,
+        )
+        t_err = threading.Thread(
+            target=_stream_pipe,
+            args=(proc.stderr, err_file, trial_id, "stderr", sys.stderr),
+            daemon=True,
+        )
+    else:
+        # WLM manages the cluster output files (out_file/err_file) itself.
+        # Stream only the local WLM tool output (bsub/srun status messages)
+        # to console; write it to separate local files to avoid clobbering the
+        # cluster-managed trial output files.
+        wlm_out = out_file.replace(".out", "_wlm.out")
+        wlm_err = err_file.replace(".err", "_wlm.err")
+        t_out = threading.Thread(
+            target=_stream_pipe,
+            args=(proc.stdout, wlm_out, trial_id, "wlm-stdout", sys.stdout),
+            daemon=True,
+        )
+        t_err = threading.Thread(
+            target=_stream_pipe,
+            args=(proc.stderr, wlm_err, trial_id, "wlm-stderr", sys.stderr),
+            daemon=True,
+        )
+
+    t_out.start()
+    t_err.start()
+    proc.wait()
+    t_out.join()
+    t_err.join()
+
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, launcher_cmd)
 
 # ============================================================
 # MULTI-METRIC EXTRACTION
@@ -288,7 +379,7 @@ def main():
         launcher_cmd = build_launcher_command(args.wlm, shell_cmd, trial.number, out_file, err_file, gpu_count, args.cpu_count, args.mem_gb, args.lsf_gpu_config_string)
 
         logger.info("Trial %d: submitting → %s", trial.number, launcher_cmd)
-        subprocess.run(launcher_cmd, shell=True, check=True)
+        run_and_stream(launcher_cmd, trial.number, out_file, err_file, args.wlm)
         logger.info("Trial %d: job finished", trial.number)
 
         values = extract_metrics_from_log(out_file, metric_list, err_path=err_file)
@@ -311,7 +402,8 @@ def main():
     )
     logger.info("Study '%s' ready (existing trials: %d)", args.optuna_study_name, len(study.trials))
 
-    study.optimize(objective, n_trials=args.optuna_n_trials)
+    logger.info("Parallelism: %d worker(s)", args.parallelism)
+    study.optimize(objective, n_trials=args.optuna_n_trials, n_jobs=args.parallelism)
 
     logger.info("=" * 60)
     logger.info("OPTIMIZATION COMPLETE")

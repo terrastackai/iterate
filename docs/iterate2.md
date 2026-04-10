@@ -41,6 +41,7 @@ iterate2 \
 | `--cpu-count` | `4` | Number of CPUs per trial |
 | `--mem-gb` | `128` | Memory (GB) per trial |
 | `--lsf-gpu-config-string` | `None` | Optional verbatim LSF `-gpu` option string (see [GPU configuration](#gpu-configuration-on-lsf)) |
+| `--parallelism` | `1` | Number of trials to run in parallel (see [Parallel execution](#parallel-execution)) |
 
 ### Optuna options
 
@@ -294,6 +295,56 @@ bsub -n 20 -R "span[hosts=1]" \
 
 !!! tip
     Use exclusive process mode (`mode=exclusive_process`) together with MPS (`mps=yes`) to share a single A100 across multiple MPS clients while still pinning the job to one physical GPU.
+
+---
+
+---
+
+## Parallel execution
+
+By default `iterate2` runs one trial at a time. Pass `--parallelism N` to run up to `N` trials simultaneously, each in its own thread.
+
+```sh
+iterate2 \
+  --parallelism 4 \
+  --wlm lsf \
+  ...
+```
+
+### How it works
+
+Each thread independently:
+
+1. Asks Optuna for a new set of hyperparameters (`study.ask()`)
+2. Builds and submits the launcher command (e.g. `bsub -K …`)
+3. Streams every output line to the main process stdout/stderr, prefixed with `[trial-N]`
+4. Reports the extracted metrics back to Optuna (`study.tell()`)
+
+Output from concurrent trials is prefixed so you can follow individual workers:
+
+```
+[trial-3] Epoch 1/10  ━━━━━━━━━━ 100/100 0:01:12
+[trial-5] Using bfloat16 precision
+[trial-3] [performance] val_loss : 0.0421
+[trial-5] Epoch 1/10  ━━━━━━━━━━ 100/100 0:01:15
+```
+
+### Output files
+
+| WLM | stdout | stderr |
+|---|---|---|
+| `none` | `trial_N.out` (written by iterate2) | `trial_N.err` (written by iterate2) |
+| `lsf` / `slurm` | `trial_N.out` (written by WLM on cluster) | `trial_N.err` (written by WLM on cluster) |
+
+For WLM backends the local WLM tool output (bsub/srun status messages) is written to `trial_N_wlm.out` / `trial_N_wlm.err` so the cluster-managed files are never overwritten.
+
+### SQLite and parallelism
+
+Optuna retries on SQLite locking errors automatically. Values up to `--parallelism 4` work well with SQLite. For higher concurrency use a PostgreSQL storage URL:
+
+```sh
+--optuna-db-path postgresql://user:pass@host/dbname
+```
 
 ---
 
