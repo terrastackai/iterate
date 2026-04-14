@@ -1,0 +1,37 @@
+####################
+# Job Metadata
+# NOTE: iterate2 appends "-trial-<N>" to jobName so each trial is a unique resource.
+####################
+jobName: "romeokienzler-gpu-test-hpo"
+containerImage: "us.icr.io/geodn/gridfm-graphkit:0.1"
+imagePullPolicy: "IfNotPresent"
+imagePullSecrets:
+  - name: "pullsecret-gridfm-geodn"
+
+##################################
+# Resource Requirements
+# numGpusPerPod is overwritten per-trial by the gpu_num HPO parameter.
+##################################
+numPods: 1
+numCpusPerPod: 32
+numGpusPerPod: 1
+totalMemoryPerPod: "32Gi"
+
+########################
+# Workload Specification
+########################
+setupCommands:
+  - "pip install -U claimed"
+  # iterate2 replaces {{HPO_COMMAND}} with the HPO-parametrised CLI call.
+  # The awk wrapper renames duplicate "Samples/sec:" lines to unique
+  # [performance] metric names so iterate2 can extract all four metrics.
+  - |
+    {{HPO_COMMAND}} 2>&1 | awk '
+      /^--- DataLoader/  { sec="dataloader" }
+      /^--- Training/    { sec="training"   }
+      /^--- Inference/   { sec="inference"  }
+      /^--- GPU compute/ { sec="gpu"        }
+      /Samples\/sec:/    { print "[performance] " sec "_samples_per_sec: " $NF; next }
+      /GFLOPS:/          { print "[performance] gflops: " $NF; next }
+                         { print }
+    '

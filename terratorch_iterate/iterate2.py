@@ -269,19 +269,17 @@ def build_vela_job_yaml(
     replaced = False
     for i, entry in enumerate(setup_cmds):
         if placeholder in str(entry):
-            setup_cmds[i] = container_cmd
+            # In-place substitution: keeps any wrapper (e.g. awk pipeline) around the placeholder
+            setup_cmds[i] = str(entry).replace(placeholder, container_cmd)
             replaced = True
-            logger.debug("Vela trial %d: replaced setupCommands[%d] with HPO command", trial_id, i)
+            logger.debug("Vela trial %d: substituted placeholder in setupCommands[%d]", trial_id, i)
             break
     if not replaced:
         logger.warning(
-            "Vela trial %d: placeholder '%s' not found in setupCommands – replacing last entry",
+            "Vela trial %d: placeholder '%s' not found in setupCommands – appending command as new entry",
             trial_id, placeholder,
         )
-        if setup_cmds:
-            setup_cmds[-1] = container_cmd
-        else:
-            setup_cmds.append(container_cmd)
+        setup_cmds.append(container_cmd)
     data["setupCommands"] = setup_cmds
 
     return yaml.dump(data, default_flow_style=False, allow_unicode=True), job_name
