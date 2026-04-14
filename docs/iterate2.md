@@ -36,12 +36,25 @@ iterate2 \
 | `--venv` | `.venv` | Virtual-environment directory to activate. Set to empty string to disable |
 | `--interpreter` | `python` | Python interpreter to invoke |
 | `--param-setter` | `None` | Use setter-style argument passing (see [Setter-style arguments](#setter-style-arguments)) |
-| `--wlm` | `none` | Workload manager: `lsf`, `slurm`, `openshift`, or `none` |
+| `--wlm` | `none` | Workload manager: `lsf`, `slurm`, `vela`, or `none` |
 | `--gpu-count` | `1` | Number of GPUs per trial |
 | `--cpu-count` | `4` | Number of CPUs per trial |
 | `--mem-gb` | `128` | Memory (GB) per trial |
 | `--lsf-gpu-config-string` | `None` | Optional verbatim LSF `-gpu` option string (see [GPU configuration](#gpu-configuration-on-lsf)) |
 | `--parallelism` | `1` | Number of trials to run in parallel (see [Parallel execution](#parallel-execution)) |
+
+### Vela (OpenShift) options
+
+Required when `--wlm vela`.
+
+| Option | Default | Description |
+|---|---|---|
+| `--vela-job-template` | *(required)* | Path to the Vela job YAML template. `{{HPO_COMMAND}}` in `setupCommands` is replaced per trial |
+| `--vela-chart-path` | *(required)* | Path to the `pytorchjob-generator` helm chart directory |
+| `--vela-namespace` | *(current context)* | OpenShift/Kubernetes namespace |
+| `--vela-cmd-placeholder` | `{{HPO_COMMAND}}` | String in `setupCommands` that is replaced with the HPO-parametrised CLI call |
+| `--vela-pod-ready-timeout` | `600` | Seconds to wait for the trial pod to reach Running state |
+| `--vela-job-timeout` | `86400` | Seconds to wait (streaming logs) for the job to complete |
 
 ### Optuna options
 
@@ -368,9 +381,67 @@ Uses `srun` with `--gres=gpu:<N>`, `--cpus-per-task`, and `--mem` flags.
 
 Runs the command directly in a local shell, redirecting stdout/stderr to `trial_<N>.out` / `trial_<N>.err`.
 
-### openshift
+### Vela (OpenShift / MLBatch)
 
-Not yet implemented.
+`--wlm vela` submits each trial as a [PyTorchJob](https://www.kubeflow.org/docs/components/training/pytorch/) via the [MLBatch `pytorchjob-generator`](https://github.com/project-codeflare/mlbatch) helm chart.
+
+#### Submission flow
+
+1. For each Optuna trial iterate2:
+    * Builds the CLI invocation from sampled + static args.
+    * Patches the **job template YAML**:
+        * appends `-trial-<N>` to `jobName` (unique resource per trial)
+        * sets `numGpusPerPod` from `gpu_num` (HPO or CLI `--gpu-count`)
+        * replaces the `{{HPO_COMMAND}}` placeholder in `setupCommands` with the generated CLI call
+    * Runs `helm template -f <patched.yaml> <chart> | oc create [-n <ns>] -f-`
+2. Polls until `<jobName>-master-0` pod appears, then streams `oc logs -f <pod>` — **this call blocks until the container exits**, so the trial behaves the same as other WLM backends.
+3. Pod exit code is checked; non-zero raises an error.
+4. The `PyTorchJob` resource is deleted.
+
+#### Job template
+
+Create a YAML file modelled on `examples/vela_gridfm_template.yaml`.  The only special requirement is the `{{HPO_COMMAND}}` placeholder somewhere in `setupCommands`:
+
+```yaml
+jobName: "my-project-hpo"       # iterate2 appends -trial-N
+numGpusPerPod: 1                # iterate2 overwrites with gpu_num
+numCpusPerPod: 32
+totalMemoryPerPod: "32Gi"
+
+volumes:
+  - name: "data-vol"
+    claimName: "my-pvc"
+    mountPath: "/mnt/data"
+
+setupCommands:
+  - "wget -q https://example.com/config.yaml"
+  - "{{HPO_COMMAND}}"           # ← iterate2 fills this in
+```
+
+#### Example invocation
+
+```sh
+iterate2 \
+  --script            "gridfm_graphkit train" \
+  --interpreter       "" \
+  --wlm               vela \
+  --vela-job-template examples/vela_gridfm_template.yaml \
+  --vela-chart-path   ../mlbatch/tools/pytorchjob-generator/chart \
+  --vela-namespace    my-namespace \
+  --gpu-count         1 \
+  --optuna-study-name gridfm_vela_hpo \
+  --optuna-db-path    sqlite:///gridfm_vela_hpo.db \
+  --optuna-n-trials   20 \
+  --hpo-yaml          configs/gridfm_graphkit_hpo.yaml
+```
+
+See `examples/run_vela_example.sh` for a complete ready-to-run script.
+
+!!! note
+    `--script` is the bare CLI entry-point (`gridfm_graphkit train`).  Set `--interpreter ""` to suppress the default `python` prefix.
+
+!!! tip
+    `gpu_num` in the HPO space controls both `numGpusPerPod` in the job YAML **and** the WLM resource request, just like with LSF/Slurm.
 
 ---
 
