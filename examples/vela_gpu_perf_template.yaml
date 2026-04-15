@@ -15,7 +15,7 @@ imagePullSecrets:
 numPods: 1
 numCpusPerPod: 32
 numGpusPerPod: 1
-totalMemoryPerPod: "32Gi"
+totalMemoryPerPod: "64Gi"
 
 ########################
 # Workload Specification
@@ -23,15 +23,7 @@ totalMemoryPerPod: "32Gi"
 setupCommands:
   - "pip install -U claimed"
   # iterate2 replaces {{HPO_COMMAND}} with the HPO-parametrised CLI call.
-  # The awk wrapper renames duplicate "Samples/sec:" lines to unique
-  # [performance] metric names so iterate2 can extract all four metrics.
-  - |
-    {{HPO_COMMAND}} 2>&1 | awk '
-      /^--- DataLoader/  { sec="dataloader" }
-      /^--- Training/    { sec="training"   }
-      /^--- Inference/   { sec="inference"  }
-      /^--- GPU compute/ { sec="gpu"        }
-      /Samples\/sec:/    { print "[performance] " sec "_samples_per_sec: " $NF; next }
-      /GFLOPS:/          { print "[performance] gflops: " $NF; next }
-                         { print }
-    '
+  # Each setupCommands entry must be a single line (Helm chart constraint).
+  # Metrics are disambiguated by iterate2 using Samples/sec#N (Nth-occurrence)
+  # rather than awk renaming.
+  - "{{HPO_COMMAND}}"

@@ -241,48 +241,56 @@ def build_vela_job_yaml(
     container_cmd: str,
     placeholder: str,
 ) -> tuple[str, str]:
-    """Load *template_path*, inject HPO parameters, and return ``(yaml_str, job_name)``.
+    """Load *template_path* as raw text, inject HPO parameters, return ``(yaml_str, job_name)``.
 
-    Changes applied to the template:
-    * The ``jobName`` field gets a ``-trial-{trial_id}`` suffix so each trial
-      creates a unique Kubernetes resource.
+    All modifications are done via targeted regex/string substitutions on the raw
+    YAML text so that multi-line block scalars (e.g. awk pipelines), single-quoted
+    strings, and other constructs that PyYAML would mangle on a load→dump round-trip
+    are preserved exactly as written in the template.
+
+    Changes applied:
+    * ``jobName`` gets a ``-trial-{trial_id}`` suffix (unique Kubernetes resource).
     * ``numGpusPerPod`` is overwritten with *gpu_count*.
-    * Any entry in ``setupCommands`` that equals *placeholder* is replaced with
-      *container_cmd*.  If no entry matches the placeholder, the last entry is
-      replaced and a warning is emitted.
+    * The *placeholder* string inside ``setupCommands`` is replaced with
+      *container_cmd* in-place, preserving any surrounding wrapper (e.g. awk pipeline).
     """
     with open(template_path, "r") as fh:
-        data = yaml.safe_load(fh)
+        text = fh.read()
 
-    # Unique job name per trial
-    base_name = data.get("jobName", "hpo-job")
-    job_name = f"{base_name}-trial-{trial_id}"
-    data["jobName"] = job_name
+    # ── jobName ──────────────────────────────────────────────────────────────
+    job_name_match = re.search(r'^(jobName\s*:\s*["\']?)([^"\'#\n]+)(["\']?)', text, re.MULTILINE)
+    if not job_name_match:
+        raise ValueError(f"'jobName' key not found in template '{template_path}'")
+    raw_name = job_name_match.group(2).strip()
+    job_name = f"{raw_name}-trial-{trial_id}"
+    text = (
+        text[:job_name_match.start(2)]
+        + job_name_match.group(2).replace(raw_name, job_name)
+        + text[job_name_match.end(2):]
+    )
     logger.debug("Vela trial %d: jobName → %s", trial_id, job_name)
 
-    # GPU count
-    data["numGpusPerPod"] = gpu_count
+    # ── numGpusPerPod ────────────────────────────────────────────────────────
+    text = re.sub(
+        r'^(numGpusPerPod\s*:\s*)\S+',
+        lambda m: f"{m.group(1)}{gpu_count}",
+        text,
+        flags=re.MULTILINE,
+    )
     logger.debug("Vela trial %d: numGpusPerPod → %d", trial_id, gpu_count)
 
-    # Inject command
-    setup_cmds = data.get("setupCommands", [])
-    replaced = False
-    for i, entry in enumerate(setup_cmds):
-        if placeholder in str(entry):
-            # In-place substitution: keeps any wrapper (e.g. awk pipeline) around the placeholder
-            setup_cmds[i] = str(entry).replace(placeholder, container_cmd)
-            replaced = True
-            logger.debug("Vela trial %d: substituted placeholder in setupCommands[%d]", trial_id, i)
-            break
-    if not replaced:
+    # ── placeholder substitution ─────────────────────────────────────────────
+    if placeholder in text:
+        text = text.replace(placeholder, container_cmd)
+        logger.debug("Vela trial %d: substituted placeholder '%s'", trial_id, placeholder)
+    else:
         logger.warning(
-            "Vela trial %d: placeholder '%s' not found in setupCommands – appending command as new entry",
-            trial_id, placeholder,
+            "Vela trial %d: placeholder '%s' not found in template '%s' – appending command",
+            trial_id, placeholder, template_path,
         )
-        setup_cmds.append(container_cmd)
-    data["setupCommands"] = setup_cmds
+        text += f"\n  - {container_cmd}\n"
 
-    return yaml.dump(data, default_flow_style=False, allow_unicode=True), job_name
+    return text, job_name
 
 
 def _oc(*args, namespace: Optional[str] = None, check: bool = True, capture: bool = False):
@@ -419,7 +427,8 @@ def run_vela_trial(
         exit_code = int(exit_code_str) if exit_code_str.lstrip("-").isdigit() else 0
         logger.info("Trial %d: pod exit code = %s", trial_id, exit_code)
         if exit_code != 0:
-            raise subprocess.CalledProcessError(exit_code, log_cmd)
+            logger.warning("Trial %d: pod exited with code %d – marking trial as pruned", trial_id, exit_code)
+            raise optuna.exceptions.TrialPruned(f"pod exited with code {exit_code}")
 
     finally:
         # ── 6. Cleanup – delete the job ───────────────────────────────────────
@@ -516,6 +525,19 @@ def run_and_stream(launcher_cmd: str, trial_id: int, out_file: str, err_file: st
 # ============================================================
 
 def extract_metrics_from_log(path: str, metric_names: List[str], err_path: Optional[str] = None) -> List[float]:
+    """Extract metric values from a log file.
+
+    Each entry in *metric_names* is either a plain name (uses the **last**
+    match) or ``name#N`` to select the **N-th occurrence** (0-based). This
+    lets you disambiguate scripts that print the same metric key multiple
+    times, e.g.::
+
+        metrics:
+          - "Samples/sec#0"   # DataLoader throughput (first occurrence)
+          - "Samples/sec#1"   # Training throughput   (second occurrence)
+          - "Samples/sec#2"   # Inference throughput  (third occurrence)
+          - GFLOPS
+    """
     logger.debug("Extracting metrics %s from '%s'", metric_names, path)
     results = []
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -532,14 +554,33 @@ def extract_metrics_from_log(path: str, metric_names: List[str], err_path: Optio
             logger.debug("Err file '%s' not found, skipping", err_path)
 
     for metric in metric_names:
+        # Support  name#N  syntax for Nth-occurrence selection (0-based)
+        occurrence: Optional[int] = None
+        bare_metric = metric
+        idx_match = re.fullmatch(r'(.+)#(\d+)', metric)
+        if idx_match:
+            bare_metric = idx_match.group(1)
+            occurrence = int(idx_match.group(2))
+
         # Matches: key: value | key=value | [performance] key : value | Lightning table │ key │ value │
         pattern = re.compile(
-            rf"(?:\[\w+\]\s*)?{re.escape(metric)}\s*(?:[:=│])\s*([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)"
+            rf"(?:\[\w+\]\s*)?{re.escape(bare_metric)}\s*(?:[:=│])\s*([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)"
         )
         matches = pattern.findall(text)
         if not matches:
             logger.warning("Metric '%s' not found in '%s' — defaulting to 0.0", metric, path)
             results.append(0.0)
+        elif occurrence is not None:
+            if occurrence >= len(matches):
+                logger.warning(
+                    "Metric '%s' occurrence #%d requested but only %d match(es) found — defaulting to 0.0",
+                    metric, occurrence, len(matches),
+                )
+                results.append(0.0)
+            else:
+                value = float(matches[occurrence])
+                logger.debug("Metric '%s': using occurrence #%d = %s", metric, occurrence, value)
+                results.append(value)
         else:
             value = float(matches[-1])
             logger.debug("Metric '%s': found %d match(es), using last value %s", metric, len(matches), value)

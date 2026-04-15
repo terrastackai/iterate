@@ -35,7 +35,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # Clone mlbatch first:  git clone https://github.com/project-codeflare/mlbatch
 CHART_PATH="${MLBATCH_CHART_PATH:-${REPO_ROOT}/../mlbatch/tools/pytorchjob-generator/chart}"
 
-iterate2 \
+iterate \
   --script            "gridfm_graphkit train" \
   --interpreter       ""                                       \
   --wlm               vela                                    \

@@ -13,14 +13,15 @@
 #   All remaining fixed CLI flags for gpu_performance_test.py
 #
 # Metrics:
-#   Emitted as [performance] lines by the awk rename wrapper in the template.
-#   Using last-match semantics of extract_metrics_from_log each name is unique.
+#   The gpu_performance_test script prints "Samples/sec:" three times (DataLoader,
+#   Training, Inference) and "GFLOPS:" once. iterate2 uses the  name#N  syntax
+#   to select the Nth occurrence (0-based) of a repeated metric name.
 
 metrics:
-  - dataloader_samples_per_sec
-  - training_samples_per_sec
-  - inference_samples_per_sec
-  - gflops
+  - "Samples/sec#0"   # DataLoader throughput (1st occurrence)
+  - "Samples/sec#1"   # Training throughput   (2nd occurrence)
+  - "Samples/sec#2"   # Inference throughput  (3rd occurrence)
+  - GFLOPS
 
 hpo:
   gpu_num:
