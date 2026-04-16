@@ -416,14 +416,60 @@ def run_vela_trial(
         t_err.join()
         logger.debug("Trial %d: log stream ended (rc=%d)", trial_id, log_proc.returncode)
 
+        # ── 4b. If oc logs exited early (e.g. "unexpected EOF"), the pod may
+        #        still be running.  Re-attach the log stream and wait for it to
+        #        finish so we capture the full output and don't delete a live job.
+        if log_proc.returncode != 0:
+            logger.warning(
+                "Trial %d: oc logs exited with rc=%d (possible EOF disconnect) – "
+                "waiting for pod to terminate before reading exit code",
+                trial_id, log_proc.returncode,
+            )
+            # Wait for pod phase Succeeded or Failed (container terminated).
+            oc_wait_phase = subprocess.run(
+                ["oc", "wait", f"pod/{master_pod}",
+                 "--for=jsonpath={.status.phase}=Succeeded",
+                 f"--timeout={job_timeout}s"]
+                + ns_args,
+                capture_output=True, text=True,
+            )
+            if oc_wait_phase.returncode != 0:
+                # Pod may have Failed; try that phase too.
+                subprocess.run(
+                    ["oc", "wait", f"pod/{master_pod}",
+                     "--for=jsonpath={.status.phase}=Failed",
+                     f"--timeout=30s"]
+                    + ns_args,
+                    capture_output=True, text=True,
+                )
+            # Re-stream any log lines written after the disconnect into the same files.
+            catchup = subprocess.run(
+                ["oc", "logs", "--tail=-1", master_pod] + ns_args,
+                capture_output=True, text=True,
+            )
+            if catchup.stdout:
+                with open(out_file, "a", encoding="utf-8", errors="replace") as fh:
+                    fh.write(catchup.stdout)
+            if catchup.stderr:
+                with open(err_file, "a", encoding="utf-8", errors="replace") as fh:
+                    fh.write(catchup.stderr)
+
         # ── 5. Check pod exit code ────────────────────────────────────────────
-        ec_result = subprocess.run(
-            ["oc", "get", "pod", master_pod, "-o",
-             "jsonpath={.status.containerStatuses[0].state.terminated.exitCode}"]
-            + ns_args,
-            capture_output=True, text=True,
-        )
-        exit_code_str = ec_result.stdout.strip()
+        # Poll until the pod has a terminated exit code (handles the race
+        # between oc-logs EOF and pod termination being recorded in the API).
+        exit_code_str = ""
+        for _attempt in range(30):
+            ec_result = subprocess.run(
+                ["oc", "get", "pod", master_pod, "-o",
+                 "jsonpath={.status.containerStatuses[0].state.terminated.exitCode}"]
+                + ns_args,
+                capture_output=True, text=True,
+            )
+            exit_code_str = ec_result.stdout.strip()
+            if exit_code_str.lstrip("-").isdigit():
+                break
+            logger.debug("Trial %d: exit code not yet available, retrying in 5 s…", trial_id)
+            time.sleep(5)
         exit_code = int(exit_code_str) if exit_code_str.lstrip("-").isdigit() else 0
         logger.info("Trial %d: pod exit code = %s", trial_id, exit_code)
         if exit_code != 0:
