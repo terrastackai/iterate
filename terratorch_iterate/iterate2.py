@@ -745,7 +745,7 @@ def main():
     logger.info("Creating Optuna study (directions: %s)", directions)
 
     if args.optuna_db_path.startswith("js:///"):
-        journal_path = args.optuna_db_path[len("js://"):]
+        journal_path = args.optuna_db_path[len("js:///"):]
         logger.info("Using JournalStorage at '%s'", journal_path)
         storage = JournalStorage(JournalFileStorage(journal_path))
     elif "sqlite" in args.optuna_db_path:

@@ -47,6 +47,7 @@ iterate \
   --vela-job-timeout       7200                                            \
   --gpu-count              1                                               \
   --optuna-study-name      gpu_perf_hpo                                    \
-  --optuna-db-path         "sqlite:///gpu_perf_hpo.db"                     \
+  --optuna-db-path         "js:///gpu_perf_hpo.journal"                    \
    --optuna-n-trials        250                                             \
-  --hpo-yaml               "${REPO_ROOT}/configs/gpu_perf_hpo.yaml"
+  --hpo-yaml               "${REPO_ROOT}/configs/gpu_perf_hpo.yaml"        \
+  --parallelism          5                                               \

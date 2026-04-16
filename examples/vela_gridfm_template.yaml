@@ -29,6 +29,6 @@ volumes:
 setupCommands:
   - "pip install -U git+https://github.com/gridfm/gridfm-graphkit.git@fix_multi_gpu_training"
   - "wget https://raw.githubusercontent.com/gridfm/gridfm-graphkit/refs/heads/main/examples/config/HGNS_PF_datakit_case118.yaml"
-  - "sed -i 's/epochs: 200/epochs: 5/g' HGNS_PF_datakit_case118.yaml"
+#  - "sed -i 's/epochs: 200/epochs: 5/g' HGNS_PF_datakit_case118.yaml"
   # iterate replaces the placeholder below with the HPO-parametrised CLI call.
   - "{{HPO_COMMAND}}"

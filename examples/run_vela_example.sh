@@ -33,7 +33,10 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # Path to the mlbatch pytorchjob-generator helm chart.
 # Clone mlbatch first:  git clone https://github.com/project-codeflare/mlbatch
-CHART_PATH="${MLBATCH_CHART_PATH:-${REPO_ROOT}/../mlbatch/tools/pytorchjob-generator/chart}"
+CHART_PATH="${MLBATCH_CHART_PATH:-${HOME}/tmp/mlbatch/tools/pytorchjob-generator/chart}"
+
+NAMESPACE_ARG=()
+[[ -n "${OC_NAMESPACE:-}" ]] && NAMESPACE_ARG=(--vela-namespace "${OC_NAMESPACE}")
 
 iterate \
   --script            "gridfm_graphkit train" \
@@ -41,12 +44,14 @@ iterate \
   --wlm               vela                                    \
   --vela-job-template "${SCRIPT_DIR}/vela_gridfm_template.yaml" \
   --vela-chart-path   "${CHART_PATH}"                         \
-  --vela-namespace    "${OC_NAMESPACE:-}"                     \
+  "${NAMESPACE_ARG[@]}"						 \
   --vela-cmd-placeholder "{{HPO_COMMAND}}"                    \
   --vela-pod-ready-timeout 600                                 \
   --vela-job-timeout  86400                                    \
+  --no-underscore-to-hyphen                                    \
   --gpu-count         1                                        \
   --optuna-study-name  gridfm_vela_hpo                        \
-  --optuna-db-path     "sqlite:///gridfm_vela_hpo.db"         \
+  --optuna-db-path     "js:///gridfm_vela_hpo.journal"        \
+  --parallelism        16                                      \
   --optuna-n-trials    20                                      \
   --hpo-yaml          "${REPO_ROOT}/configs/gridfm_graphkit_hpo.yaml"
