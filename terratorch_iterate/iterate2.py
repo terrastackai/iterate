@@ -763,7 +763,12 @@ def main():
     logger.info("Study '%s' ready (existing trials: %d)", args.optuna_study_name, len(study.trials))
 
     logger.info("Parallelism: %d worker(s)", args.parallelism)
-    study.optimize(objective, n_trials=args.optuna_n_trials, n_jobs=args.parallelism)
+    study.optimize(
+        objective,
+        n_trials=args.optuna_n_trials,
+        n_jobs=args.parallelism,
+        catch=(Exception,),   # mark trial as FAILED and continue; never crash the study
+    )
 
     logger.info("=" * 60)
     logger.info("OPTIMIZATION COMPLETE")
