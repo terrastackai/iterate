@@ -14,8 +14,11 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Literal, List
 
 import optuna
-from optuna.storages import JournalStorage, JournalFileStorage
 import yaml
+from terratorch_iterate.iterate2.plugin.coordinator import load_builtin_plugins, resolve_storage
+
+# Load built-in coordinator plugins (sqlite, journalfs, postgresql)
+load_builtin_plugins()
 
 logger = logging.getLogger("iterate2")
 
@@ -803,14 +806,7 @@ def main():
     directions = ["maximize"] * len(metric_list)
     logger.info("Creating Optuna study (directions: %s)", directions)
 
-    if args.optuna_db_path.startswith("js:///"):
-        journal_path = args.optuna_db_path[len("js:///"):]
-        logger.info("Using JournalStorage at '%s'", journal_path)
-        storage = JournalStorage(JournalFileStorage(journal_path))
-    elif "sqlite" in args.optuna_db_path:
-        storage = args.optuna_db_path
-    else:
-        storage = f"sqlite:///{args.optuna_db_path}"
+    storage = resolve_storage(args.optuna_db_path)
     logger.debug("Optuna storage: %s", storage)
 
     study = optuna.create_study(
