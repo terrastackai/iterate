@@ -22,7 +22,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-iterate2 \
+iterate \
   --script        "${SCRIPT_DIR}/bumpy_function.py"  \
   --root-dir      "${SCRIPT_DIR}"                    \
   --venv          ""                                 \
