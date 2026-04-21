@@ -83,10 +83,8 @@ source '${GRIDFM_VENV}/bin/activate'"
 # These are appended verbatim after the sampled hyperparameters.
 # ---------------------------------------------------------------------------
 STATIC_ARGS_JSON='{
-  "--config":           "./examples/config/HGNS_PF_datakit_case118.yaml",
-  "--data_path":        "'"${DATA_PATH}"'",
-  "--log_dir":          "'"${LOG_DIR}"'",
-  "--report-performance": ""
+  "log_dir":            "'"${LOG_DIR}"'",
+  "report-performance": true
 }'
 
 # ---------------------------------------------------------------------------
