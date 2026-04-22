@@ -25,22 +25,16 @@ hpo:
     choices:
       small:                # single GPU – conservative resources
         gpu_num:     1
-        num_workers: 8
-        batch_size:  32
+        num_workers: 32
+        batch_size:  64
       medium:               # two GPUs – doubled throughput
         gpu_num:     2
         num_workers: 16
-        batch_size:  64
+        batch_size:  32
       large:                # four GPUs – full-node run
         gpu_num:     4
-        num_workers: 32
-        batch_size:  128
-
-  bfloat16:
-    type: flag               # store_true: true → --bfloat16, false → flag omitted
-
-  tf32:
-    type: flag               # store_true: true → --tf32, false → flag omitted
+        num_workers: 8
+        batch_size:  16
 
   compile:
     type: categorical
