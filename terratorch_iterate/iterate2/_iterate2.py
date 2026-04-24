@@ -49,50 +49,19 @@ def parse_args():
     )
     parser.add_argument("--interpreter", default="python", help="Interpreter to use")
     parser.add_argument("--param-setter", type=str, default=None)
-    parser.add_argument("--wlm", choices=["lsf", "slurm", "openshift", "vela", "none"], default="none")
-    parser.add_argument("--gpu-count", type=int, default=1)
-    parser.add_argument("--cpu-count", type=int, default=4)
-    parser.add_argument("--mem-gb", type=int, default=128)
-    parser.add_argument("--lsf-gpu-config-string", type=str, default=None)
-
-    # ------------------------
-    # Vela / OpenShift options
-    # ------------------------
     parser.add_argument(
-        "--vela-job-template",
+        "--wlm-plugin",
         type=str,
         default=None,
-        help="Path to the Vela job YAML template (required when --wlm vela)",
-    )
-    parser.add_argument(
-        "--vela-chart-path",
-        type=str,
-        default=None,
-        help="Path to the helm chart directory (required when --wlm vela)",
-    )
-    parser.add_argument(
-        "--vela-namespace",
-        type=str,
-        default=None,
-        help="OpenShift/Kubernetes namespace (uses current context if omitted)",
-    )
-    parser.add_argument(
-        "--vela-cmd-placeholder",
-        type=str,
-        default="{{HPO_COMMAND}}",
-        help="String in the job template's setupCommands that is replaced with the HPO command (default: '{{HPO_COMMAND}}')",
-    )
-    parser.add_argument(
-        "--vela-pod-ready-timeout",
-        type=int,
-        default=600,
-        help="Seconds to wait for the trial pod to reach Running state (default: 600)",
-    )
-    parser.add_argument(
-        "--vela-job-timeout",
-        type=int,
-        default=86400,
-        help="Seconds to wait for the trial job to complete (default: 86400 = 24 h)",
+        help=(
+            "Path to an executable WLM plugin script that submits/runs each trial. "
+            "When omitted, trials run locally (equivalent to the old --wlm none). "
+            "The plugin receives trial information as environment variables: "
+            "ITERATE_TRIAL_NUMBER, ITERATE_TRIAL_CMD, ITERATE_OUT_FILE, ITERATE_ERR_FILE, "
+            "and ITERATE_WLM_<KEY> for every key in the 'wlm:' YAML section. "
+            "Exit 0 to signal success; any other exit code marks the trial as failed. "
+            "See examples/wlm_plugins/ for LSF and Vela reference implementations."
+        ),
     )
     parser.add_argument(
         "--parallelism",
@@ -157,25 +126,6 @@ def resolve_paths(script: str, root_dir: Optional[str]):
     resolved = Path(root_dir).resolve()
     logger.debug("Resolved root_dir '%s' → '%s'", root_dir, resolved)
     return script, resolved
-
-def build_launcher_command(wlm, cmd, trial_id, out_file, err_file, gpu_count, cpu_count, mem_gb, lsf_gpu_config_string):
-    logger.debug("Building launcher command: wlm=%s gpu_count=%d cpu_count=%d mem_gb=%d", wlm, gpu_count, cpu_count, mem_gb)
-    if wlm == "lsf":
-        gpu_fragment = f"-gpu \"{lsf_gpu_config_string}\"" if lsf_gpu_config_string else (f"-gpu num={gpu_count}" if gpu_count > 0 else "")
-        launcher = f"bsub {gpu_fragment} -K -o {out_file} -e {err_file} -R \"rusage[ngpus={gpu_count}, cpu={cpu_count}, mem={mem_gb}GB]\" -J hpo_trial_{trial_id} \"{cmd}\""
-    elif wlm == "slurm":
-        launcher = f"srun --gres=gpu:{gpu_count} --cpus-per-task={cpu_count} --mem={mem_gb}G --job-name=hpo_trial_{trial_id} --output={out_file} --error={err_file} bash -c \"{cmd}\""
-    elif wlm == "none":
-        # No embedded redirect: run_and_stream() captures stdout/stderr via PIPE
-        # and writes to out_file/err_file itself.
-        launcher = f'bash -c "{cmd}"'
-    elif wlm in ("vela",):
-        # Vela uses a separate submission flow; this function is not called for it.
-        raise ValueError("build_launcher_command must not be called for wlm='vela'; use build_vela_job_yaml + run_vela_trial instead.")
-    else:
-        raise ValueError(f"Unknown WLM: {wlm}")
-    logger.debug("Launcher command: %s", launcher)
-    return launcher
 
 def build_shell_command(interpreter, root_dir, script_path, venv, script_args, param_setter, underscore_to_hyphen=True, pre_run_commands=None):
     parts = [f"cd {root_dir}"]
@@ -250,264 +200,6 @@ def build_container_command(interpreter: str, script_path: str, script_args: dic
     return cmd
 
 
-def build_vela_job_yaml(
-    template_path: str,
-    trial_id: int,
-    gpu_count: int,
-    container_cmd: str,
-    placeholder: str,
-) -> tuple[str, str]:
-    """Load *template_path* as raw text, inject HPO parameters, return ``(yaml_str, job_name)``.
-
-    All modifications are done via targeted regex/string substitutions on the raw
-    YAML text so that multi-line block scalars (e.g. awk pipelines), single-quoted
-    strings, and other constructs that PyYAML would mangle on a load→dump round-trip
-    are preserved exactly as written in the template.
-
-    Changes applied:
-    * ``jobName`` gets a ``-trial-{trial_id}`` suffix (unique Kubernetes resource).
-    * ``numGpusPerPod`` is overwritten with *gpu_count*.
-    * The *placeholder* string inside ``setupCommands`` is replaced with
-      *container_cmd* in-place, preserving any surrounding wrapper (e.g. awk pipeline).
-    """
-    with open(template_path, "r") as fh:
-        text = fh.read()
-
-    # ── jobName ──────────────────────────────────────────────────────────────
-    job_name_match = re.search(r'^(jobName\s*:\s*["\']?)([^"\'#\n]+)(["\']?)', text, re.MULTILINE)
-    if not job_name_match:
-        raise ValueError(f"'jobName' key not found in template '{template_path}'")
-    raw_name = job_name_match.group(2).strip()
-    job_name = f"{raw_name}-trial-{trial_id}"
-    text = (
-        text[:job_name_match.start(2)]
-        + job_name_match.group(2).replace(raw_name, job_name)
-        + text[job_name_match.end(2):]
-    )
-    logger.debug("Vela trial %d: jobName → %s", trial_id, job_name)
-
-    # ── numGpusPerPod ────────────────────────────────────────────────────────
-    text = re.sub(
-        r'^(numGpusPerPod\s*:\s*)\S+',
-        lambda m: f"{m.group(1)}{gpu_count}",
-        text,
-        flags=re.MULTILINE,
-    )
-    logger.debug("Vela trial %d: numGpusPerPod → %d", trial_id, gpu_count)
-
-    # ── placeholder substitution ─────────────────────────────────────────────
-    if placeholder in text:
-        text = text.replace(placeholder, container_cmd)
-        logger.debug("Vela trial %d: substituted placeholder '%s'", trial_id, placeholder)
-    else:
-        logger.warning(
-            "Vela trial %d: placeholder '%s' not found in template '%s' – appending command",
-            trial_id, placeholder, template_path,
-        )
-        text += f"\n  - {container_cmd}\n"
-
-    return text, job_name
-
-
-def _oc(*args, namespace: Optional[str] = None, check: bool = True, capture: bool = False):
-    """Run an ``oc`` sub-command, optionally capturing output."""
-    cmd = ["oc"] + list(args)
-    if namespace:
-        cmd += ["-n", namespace]
-    logger.debug("oc command: %s", " ".join(cmd))
-    if capture:
-        return subprocess.run(cmd, check=check, capture_output=True, text=True)
-    return subprocess.run(cmd, check=check)
-
-
-def run_vela_trial(
-    trial_id: int,
-    job_yaml: str,
-    chart_path: str,
-    job_name: str,
-    namespace: Optional[str],
-    out_file: str,
-    err_file: str,
-    pod_ready_timeout: int,
-    job_timeout: int,
-) -> None:
-    """Submit a Vela/OpenShift PyTorchJob, stream its logs, and wait for completion.
-
-    Steps
-    -----
-    1. Write *job_yaml* to a temp file.
-    2. ``helm template -f <tmp> <chart> | oc create [-n <ns>] -f-``
-    3. Poll until the master pod (``<job_name>-master-0``) appears.
-    4. ``oc logs -f <pod>`` – streams every line to stdout **and** *out_file*.
-    5. After streaming ends, check the pod's terminated exit-code.
-       Non-zero → raise :class:`subprocess.CalledProcessError`.
-    6. Cleanup: delete the PyTorchJob resource.
-    """
-    ns_args = ["-n", namespace] if namespace else []
-    prefix = f"[trial-{trial_id}]"
-
-    # Write temp YAML
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        suffix=".yaml",
-        prefix=f"vela_trial_{trial_id}_",
-        delete=False,
-    ) as fh:
-        fh.write(job_yaml)
-        tmp_yaml = fh.name
-    logger.debug("Vela trial %d: temp YAML written to %s", trial_id, tmp_yaml)
-
-    try:
-        # ── 1. Submit ──────────────────────────────────────────────────────────
-        ns_flag = f"-n {namespace}" if namespace else ""
-        create_cmd = (
-            f"helm template -f {tmp_yaml} {chart_path}"
-            f" | oc create {ns_flag} -f-"
-        )
-        logger.info("Trial %d: submitting Vela job → %s", trial_id, create_cmd)
-        result = subprocess.run(create_cmd, shell=True, capture_output=True, text=True)
-        with _print_lock:
-            sys.stdout.write(f"{prefix} {result.stdout}")
-            sys.stdout.flush()
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"Vela trial {trial_id}: oc create failed (rc={result.returncode}):\n"
-                f"{result.stderr}"
-            )
-        logger.info("Trial %d: job '%s' created", trial_id, job_name)
-
-        # ── 2. Wait for master pod to appear ──────────────────────────────────
-        master_pod = f"{job_name}-master-0"
-        deadline = time.monotonic() + pod_ready_timeout
-        logger.info("Trial %d: waiting for pod '%s' to appear (timeout %ds)…", trial_id, master_pod, pod_ready_timeout)
-        while time.monotonic() < deadline:
-            r = subprocess.run(
-                ["oc", "get", "pod", master_pod, "--ignore-not-found"] + ns_args,
-                capture_output=True, text=True,
-            )
-            if master_pod in r.stdout:
-                logger.debug("Trial %d: pod '%s' found", trial_id, master_pod)
-                break
-            time.sleep(5)
-        else:
-            raise TimeoutError(
-                f"Vela trial {trial_id}: pod '{master_pod}' did not appear within {pod_ready_timeout}s"
-            )
-
-        # ── 3. Wait for pod to be Running/Succeeded ───────────────────────────
-        logger.info("Trial %d: waiting for pod '%s' to be Running…", trial_id, master_pod)
-        wait_cmd = (
-            ["oc", "wait", f"pod/{master_pod}",
-             "--for=condition=Ready",
-             f"--timeout={pod_ready_timeout}s"]
-            + ns_args
-        )
-        wr = subprocess.run(wait_cmd, capture_output=True, text=True)
-        # oc wait returns non-zero if the pod is already Completed (no Ready condition);
-        # that's fine – the logs are still accessible.
-        logger.debug("Trial %d: oc wait rc=%d stderr=%s", trial_id, wr.returncode, wr.stderr.strip())
-
-        # ── 4. Stream logs ────────────────────────────────────────────────────
-        log_cmd = ["oc", "logs", "-f", master_pod] + ns_args
-        logger.info("Trial %d: streaming logs from '%s'", trial_id, master_pod)
-        log_proc = subprocess.Popen(
-            log_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        t_out = threading.Thread(
-            target=_stream_pipe,
-            args=(log_proc.stdout, out_file, trial_id, "stdout", sys.stdout),
-            daemon=True,
-        )
-        t_err = threading.Thread(
-            target=_stream_pipe,
-            args=(log_proc.stderr, err_file, trial_id, "stderr", sys.stderr),
-            daemon=True,
-        )
-        t_out.start()
-        t_err.start()
-        log_proc.wait(timeout=job_timeout)
-        t_out.join()
-        t_err.join()
-        logger.debug("Trial %d: log stream ended (rc=%d)", trial_id, log_proc.returncode)
-
-        # ── 4b. If oc logs exited early (e.g. "unexpected EOF"), the pod may
-        #        still be running.  Re-attach the log stream and wait for it to
-        #        finish so we capture the full output and don't delete a live job.
-        if log_proc.returncode != 0:
-            logger.warning(
-                "Trial %d: oc logs exited with rc=%d (possible EOF disconnect) – "
-                "waiting for pod to terminate before reading exit code",
-                trial_id, log_proc.returncode,
-            )
-            # Wait for pod phase Succeeded or Failed (container terminated).
-            oc_wait_phase = subprocess.run(
-                ["oc", "wait", f"pod/{master_pod}",
-                 "--for=jsonpath={.status.phase}=Succeeded",
-                 f"--timeout={job_timeout}s"]
-                + ns_args,
-                capture_output=True, text=True,
-            )
-            if oc_wait_phase.returncode != 0:
-                # Pod may have Failed; try that phase too.
-                subprocess.run(
-                    ["oc", "wait", f"pod/{master_pod}",
-                     "--for=jsonpath={.status.phase}=Failed",
-                     f"--timeout=30s"]
-                    + ns_args,
-                    capture_output=True, text=True,
-                )
-            # Re-stream any log lines written after the disconnect into the same files.
-            catchup = subprocess.run(
-                ["oc", "logs", "--tail=-1", master_pod] + ns_args,
-                capture_output=True, text=True,
-            )
-            if catchup.stdout:
-                with open(out_file, "a", encoding="utf-8", errors="replace") as fh:
-                    fh.write(catchup.stdout)
-            if catchup.stderr:
-                with open(err_file, "a", encoding="utf-8", errors="replace") as fh:
-                    fh.write(catchup.stderr)
-
-        # ── 5. Check pod exit code ────────────────────────────────────────────
-        # Poll until the pod has a terminated exit code (handles the race
-        # between oc-logs EOF and pod termination being recorded in the API).
-        exit_code_str = ""
-        for _attempt in range(30):
-            ec_result = subprocess.run(
-                ["oc", "get", "pod", master_pod, "-o",
-                 "jsonpath={.status.containerStatuses[0].state.terminated.exitCode}"]
-                + ns_args,
-                capture_output=True, text=True,
-            )
-            exit_code_str = ec_result.stdout.strip()
-            if exit_code_str.lstrip("-").isdigit():
-                break
-            logger.debug("Trial %d: exit code not yet available, retrying in 5 s…", trial_id)
-            time.sleep(5)
-        exit_code = int(exit_code_str) if exit_code_str.lstrip("-").isdigit() else 0
-        logger.info("Trial %d: pod exit code = %s", trial_id, exit_code)
-        if exit_code != 0:
-            logger.warning("Trial %d: pod exited with code %d – marking trial as pruned", trial_id, exit_code)
-            raise optuna.exceptions.TrialPruned(f"pod exited with code {exit_code}")
-
-    finally:
-        # ── 6. Cleanup – delete the job ───────────────────────────────────────
-        logger.debug("Trial %d: deleting PyTorchJob '%s'", trial_id, job_name)
-        subprocess.run(
-            ["oc", "delete", "pytorchjob", job_name, "--ignore-not-found"] + ns_args,
-            capture_output=True,
-        )
-        try:
-            os.unlink(tmp_yaml)
-        except OSError:
-            pass
-
-# ============================================================
-# PARALLEL STREAMING RUNNER
-# ============================================================
-
 _print_lock = threading.Lock()
 
 def _stream_pipe(pipe, dest_file, trial_id: int, stream_name: str, dest_stream):
@@ -522,57 +214,26 @@ def _stream_pipe(pipe, dest_file, trial_id: int, stream_name: str, dest_stream):
                 dest_stream.write(f"{prefix} {line}")
                 dest_stream.flush()
 
-def run_and_stream(launcher_cmd: str, trial_id: int, out_file: str, err_file: str, wlm: str):
-    """
-    Run *launcher_cmd* in a shell.
-
-    For ``wlm='none'``: captures stdout and stderr via PIPE, streams every line
-    to the main process stdout/stderr (prefixed with ``[trial-N]``), and also
-    writes them to *out_file* / *err_file* for later metric extraction.
-
-    For WLM backends (lsf, slurm, …): the WLM tool itself manages the output
-    files on the cluster.  The local subprocess output (WLM status messages,
-    errors) is still streamed with the same prefix so parallel workers are
-    distinguishable.
-    """
-    logger.debug("Trial %d: run_and_stream wlm=%s cmd=%s", trial_id, wlm, launcher_cmd)
+def run_and_stream(launcher_cmd: str, trial_id: int, out_file: str, err_file: str):
+    """Run *launcher_cmd* locally, capturing stdout/stderr to files and streaming
+    every line to the console prefixed with ``[trial-N]``."""
+    logger.debug("Trial %d: run_and_stream cmd=%s", trial_id, launcher_cmd)
     proc = subprocess.Popen(
         launcher_cmd,
         shell=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-
-    if wlm == "none":
-        # Full capture: write to files AND stream to console
-        t_out = threading.Thread(
-            target=_stream_pipe,
-            args=(proc.stdout, out_file, trial_id, "stdout", sys.stdout),
-            daemon=True,
-        )
-        t_err = threading.Thread(
-            target=_stream_pipe,
-            args=(proc.stderr, err_file, trial_id, "stderr", sys.stderr),
-            daemon=True,
-        )
-    else:
-        # WLM manages the cluster output files (out_file/err_file) itself.
-        # Stream only the local WLM tool output (bsub/srun status messages)
-        # to console; write it to separate local files to avoid clobbering the
-        # cluster-managed trial output files.
-        wlm_out = out_file.replace(".out", "_wlm.out")
-        wlm_err = err_file.replace(".err", "_wlm.err")
-        t_out = threading.Thread(
-            target=_stream_pipe,
-            args=(proc.stdout, wlm_out, trial_id, "wlm-stdout", sys.stdout),
-            daemon=True,
-        )
-        t_err = threading.Thread(
-            target=_stream_pipe,
-            args=(proc.stderr, wlm_err, trial_id, "wlm-stderr", sys.stderr),
-            daemon=True,
-        )
-
+    t_out = threading.Thread(
+        target=_stream_pipe,
+        args=(proc.stdout, out_file, trial_id, "stdout", sys.stdout),
+        daemon=True,
+    )
+    t_err = threading.Thread(
+        target=_stream_pipe,
+        args=(proc.stderr, err_file, trial_id, "stderr", sys.stderr),
+        daemon=True,
+    )
     t_out.start()
     t_err.start()
     proc.wait()
@@ -696,6 +357,26 @@ def load_static_args(args):
     logger.info("Static args loaded: %d key(s): %s", len(static), list(static.keys()))
     return static
 
+def load_wlm_config(args) -> dict:
+    """Load the optional ``wlm:`` section from the HPO YAML.
+
+    Returns a dict that is forwarded to the WLM plugin as
+    ``ITERATE_WLM_<KEY>`` environment variables.  Keys are taken verbatim
+    from the YAML (e.g. ``gpu-count``, ``mem-gb``) so plugin scripts can
+    use familiar names.
+    """
+    data = {}
+    if args.hpo_yaml:
+        with open(args.hpo_yaml, "r") as f:
+            data = yaml.safe_load(f) or {}
+    elif args.static_args_yaml:
+        with open(args.static_args_yaml, "r") as f:
+            data = yaml.safe_load(f) or {}
+    wlm_cfg = data.get("wlm", {})
+    logger.info("WLM config from YAML: %s", wlm_cfg)
+    return wlm_cfg
+
+
 def suggest_from_spec(trial, name, spec):
     t = spec["type"]
     if t == "float":
@@ -728,11 +409,15 @@ def main():
 
     logger.info("iterate2 starting")
     logger.info("Log level: %s", args.log_level)
-    logger.info("WLM: %s | interpreter: %s | script: %s", args.wlm, args.interpreter, args.script)
+    logger.info(
+        "WLM plugin: %s | interpreter: %s | script: %s",
+        args.wlm_plugin or "(local)", args.interpreter, args.script,
+    )
     logger.info("Optuna study: '%s' | db: %s | n_trials: %d", args.optuna_study_name, args.optuna_db_path, args.optuna_n_trials)
 
     hpo_space = load_hpo_space(args)
     static_args = load_static_args(args)
+    wlm_config = load_wlm_config(args)
     yaml_metrics = load_metrics_from_yaml(args)
     metric_list = yaml_metrics if yaml_metrics is not None else [m.strip() for m in args.metrics.split(",")]
     logger.info("Optimising metrics: %s (source: %s)", metric_list, "yaml" if yaml_metrics else "cli")
@@ -749,51 +434,68 @@ def main():
             else:
                 script_args[name] = val
 
-        # gpu_num in hpo/static overrides the CLI --gpu-count for this trial's launcher
-        gpu_count = int(script_args.pop("gpu_num", args.gpu_count))
-        logger.debug("Trial %d: effective gpu_count=%d", trial.number, gpu_count)
+        # gpu_num can appear in hpo or static space; pull it out and add to
+        # wlm_config so plugins can use ITERATE_WLM_GPU_NUM for resource allocation.
+        trial_wlm_config = dict(wlm_config)
+        if "gpu_num" in script_args:
+            trial_wlm_config.setdefault("gpu-count", script_args.pop("gpu_num"))
+
         logger.info("Trial %d: sampled parameters: %s", trial.number, script_args)
+        logger.debug("Trial %d: effective WLM config: %s", trial.number, trial_wlm_config)
 
         out_file = f"trial_{trial.number}.out"
         err_file = f"trial_{trial.number}.err"
         logger.debug("Trial %d: stdout → %s | stderr → %s", trial.number, out_file, err_file)
 
-        if args.wlm == "vela":
-            # ── Vela / OpenShift path ──────────────────────────────────────
-            if not args.vela_job_template:
-                raise ValueError("--vela-job-template is required when --wlm vela")
-            if not args.vela_chart_path:
-                raise ValueError("--vela-chart-path is required when --wlm vela")
-            container_cmd = build_container_command(
-                args.interpreter, script_path, script_args,
-                args.param_setter, args.underscore_to_hyphen,
+        # Build the shell command that the plugin (or local runner) shall execute.
+        shell_cmd = build_shell_command(
+            args.interpreter, root_dir, script_path, args.venv,
+            script_args, args.param_setter, args.underscore_to_hyphen,
+            pre_run_commands=args.pre_run_commands,
+        )
+        # Container-safe command: no cd / source – for plugins running inside
+        # an already-configured container image (e.g. Vela/OpenShift).
+        container_cmd = build_container_command(
+            args.interpreter, script_path, script_args,
+            args.param_setter, args.underscore_to_hyphen,
+        )
+
+        if args.wlm_plugin:
+            # ── User-provided WLM plugin ───────────────────────────────────
+            # The plugin is responsible for submitting the trial, waiting for
+            # completion, and writing stdout/stderr to out_file/err_file.
+            # It signals success via exit code 0; any other value fails the trial.
+            env = os.environ.copy()
+            env["ITERATE_TRIAL_NUMBER"]        = str(trial.number)
+            env["ITERATE_TRIAL_CMD"]           = shell_cmd
+            env["ITERATE_TRIAL_CONTAINER_CMD"] = container_cmd
+            env["ITERATE_OUT_FILE"]            = out_file
+            env["ITERATE_ERR_FILE"]            = err_file
+            for k, v in trial_wlm_config.items():
+                env_key = "ITERATE_WLM_" + k.upper().replace("-", "_").replace(" ", "_")
+                env[env_key] = str(v)
+            logger.info("Trial %d: invoking WLM plugin %s", trial.number, args.wlm_plugin)
+            result = subprocess.run(
+                [args.wlm_plugin],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
-            logger.info("Trial %d: container command → %s", trial.number, container_cmd)
-            job_yaml, job_name = build_vela_job_yaml(
-                args.vela_job_template,
-                trial.number,
-                gpu_count,
-                container_cmd,
-                args.vela_cmd_placeholder,
-            )
-            logger.debug("Trial %d: job YAML (first 400 chars):\n%s", trial.number, job_yaml[:400])
-            run_vela_trial(
-                trial_id=trial.number,
-                job_yaml=job_yaml,
-                chart_path=args.vela_chart_path,
-                job_name=job_name,
-                namespace=args.vela_namespace,
-                out_file=out_file,
-                err_file=err_file,
-                pod_ready_timeout=args.vela_pod_ready_timeout,
-                job_timeout=args.vela_job_timeout,
-            )
+            # Stream plugin output to console so operators see submission status.
+            plugin_out = result.stdout.decode("utf-8", errors="replace")
+            plugin_err = result.stderr.decode("utf-8", errors="replace")
+            prefix = f"[trial-{trial.number}][plugin]"
+            for line in plugin_out.splitlines():
+                sys.stdout.write(f"{prefix} {line}\n")
+            for line in plugin_err.splitlines():
+                sys.stderr.write(f"{prefix} {line}\n")
+            if result.returncode != 0:
+                raise subprocess.CalledProcessError(result.returncode, args.wlm_plugin)
         else:
-            # ── Standard WLM path (lsf / slurm / none) ────────────────────
-            shell_cmd = build_shell_command(args.interpreter, root_dir, script_path, args.venv, script_args, args.param_setter, args.underscore_to_hyphen, pre_run_commands=args.pre_run_commands)
-            launcher_cmd = build_launcher_command(args.wlm, shell_cmd, trial.number, out_file, err_file, gpu_count, args.cpu_count, args.mem_gb, args.lsf_gpu_config_string)
-            logger.info("Trial %d: submitting → %s", trial.number, launcher_cmd)
-            run_and_stream(launcher_cmd, trial.number, out_file, err_file, args.wlm)
+            # ── Local execution (no WLM plugin) ───────────────────────────
+            launcher_cmd = f'bash -c "{shell_cmd}"'
+            logger.info("Trial %d: running locally → %s", trial.number, launcher_cmd)
+            run_and_stream(launcher_cmd, trial.number, out_file, err_file)
 
         logger.info("Trial %d: job finished", trial.number)
 

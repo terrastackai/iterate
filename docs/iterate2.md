@@ -6,19 +6,27 @@ Key capabilities:
 
 - **Multi-objective optimisation** — extract and optimise several metrics simultaneously (Pareto front)
 - **Five HPO parameter types** — `float`, `int`, `categorical`, `flag` (store-true), `group` (bundled arg sets)
-- **Dynamic GPU count per trial** — `gpu_num` in the HPO space controls the WLM resource request per trial
+- **Dynamic GPU count per trial** — `gpu_num` in the HPO space is passed to the WLM plugin via `ITERATE_WLM_GPU_COUNT`
 - **Null-omission** — `null` in a `categorical` choice causes the flag to be completely absent from the command line
-- **Workload manager backends** — LSF, Slurm, or direct local execution
+- **WLM plugin system** — any executable (bash, Python, …) can be used as a workload-manager backend; reference implementations for LSF and Vela/OpenShift are in `examples/wlm_plugins/`
 
 ## Quick start
 
 ```sh
 iterate2 \
   --script train.py \
-  --wlm lsf \
-  --gpu-count 1 \
-  --cpu-count 20 \
-  --mem-gb 512 \
+  --wlm-plugin examples/wlm_plugins/lsf_plugin.sh \
+  --optuna-study-name my_study \
+  --optuna-db-path sqlite:///hpo.db \
+  --optuna-n-trials 50 \
+  --hpo-yaml hpo_space.yaml   # wlm: section sets gpu-count, cpu-count, …
+```
+
+For local execution (no cluster) simply omit `--wlm-plugin`:
+
+```sh
+iterate2 \
+  --script train.py \
   --optuna-study-name my_study \
   --optuna-db-path sqlite:///hpo.db \
   --optuna-n-trials 50 \
@@ -36,25 +44,8 @@ iterate2 \
 | `--venv` | `.venv` | Virtual-environment directory to activate. Set to empty string to disable |
 | `--interpreter` | `python` | Python interpreter to invoke |
 | `--param-setter` | `None` | Use setter-style argument passing (see [Setter-style arguments](#setter-style-arguments)) |
-| `--wlm` | `none` | Workload manager: `lsf`, `slurm`, `vela`, or `none` |
-| `--gpu-count` | `1` | Number of GPUs per trial |
-| `--cpu-count` | `4` | Number of CPUs per trial |
-| `--mem-gb` | `128` | Memory (GB) per trial |
-| `--lsf-gpu-config-string` | `None` | Optional verbatim LSF `-gpu` option string (see [GPU configuration](#gpu-configuration-on-lsf)) |
+| `--wlm-plugin` | *(local)* | Path to an executable WLM plugin script. When omitted, trials run locally in the current process |
 | `--parallelism` | `1` | Number of trials to run in parallel (see [Parallel execution](#parallel-execution)) |
-
-### Vela (OpenShift) options
-
-Required when `--wlm vela`.
-
-| Option | Default | Description |
-|---|---|---|
-| `--vela-job-template` | *(required)* | Path to the Vela job YAML template. `{{HPO_COMMAND}}` in `setupCommands` is replaced per trial |
-| `--vela-chart-path` | *(required)* | Path to the `pytorchjob-generator` helm chart directory |
-| `--vela-namespace` | *(current context)* | OpenShift/Kubernetes namespace |
-| `--vela-cmd-placeholder` | `{{HPO_COMMAND}}` | String in `setupCommands` that is replaced with the HPO-parametrised CLI call |
-| `--vela-pod-ready-timeout` | `600` | Seconds to wait for the trial pod to reach Running state |
-| `--vela-job-timeout` | `86400` | Seconds to wait (streaming logs) for the job to complete |
 
 ### Optuna options
 
@@ -189,13 +180,19 @@ Optuna tracks the choice as a single categorical (`dataset = "case2000"`), but t
 
 ##### `gpu_num` — dynamic GPU count
 
-The special key `gpu_num` (as `categorical` or `int`) overrides `--gpu-count` for the **WLM resource request** of each individual trial. It is consumed by `iterate2` and never forwarded to the wrapped script.
+The special key `gpu_num` (as `categorical` or `int`) is automatically extracted
+from the sampled parameters and forwarded to the WLM plugin as
+`ITERATE_WLM_GPU_COUNT`.  It does **not** appear in the wrapped script's command
+line.  The WLM plugin uses it to set the cluster resource request for the trial.
 
 ```yaml
 gpu_num:
   type: categorical
   choices: [1, 2, 4]
 ```
+
+Alternatively, set a fixed `gpu-count` in the `wlm:` section of the HPO YAML
+when all trials use the same number of GPUs.
 
 ### Static arguments
 
@@ -270,46 +267,59 @@ iterate2 --param-setter set ...
 
 ---
 
-## GPU configuration on LSF
+## WLM plugin system
 
-When `--wlm lsf` is selected, `iterate2` constructs a `bsub` command for each trial.
+iteate2 has no built-in knowledge of any workload manager.  Instead it calls a
+user-supplied **plugin script** once per trial.  The plugin can be any
+executable (bash, Python, …).
 
-### Default behaviour
+### Plugin interface
 
-| `--gpu-count` | Generated fragment |
+iterate2 calls the plugin with no positional arguments.  All information is
+delivered through environment variables:
+
+| Variable | Description |
 |---|---|
-| `> 0` (default `1`) | `-gpu num=<N>` |
-| `0` | *(no `-gpu` flag, CPU-only job)* |
+| `ITERATE_TRIAL_NUMBER` | Integer trial ID |
+| `ITERATE_TRIAL_CMD` | Full shell command (with `cd`, `source venv`) – suited for HPC WLMs |
+| `ITERATE_TRIAL_CONTAINER_CMD` | Bare CLI invocation (no `cd`/`source`) – suited for container-based systems |
+| `ITERATE_OUT_FILE` | File where **stdout** must be written |
+| `ITERATE_ERR_FILE` | File where **stderr** must be written |
+| `ITERATE_WLM_<KEY>` | Every key from the YAML `wlm:` section (uppercased, hyphens → underscores) |
 
-### `--lsf-gpu-config-string`
+The plugin must exit **0** on success; any other exit code marks the trial as
+failed in Optuna.
 
-For advanced LSF GPU scheduling you can supply the full value of the `-gpu` option as a string. When set, it **completely replaces** the auto-generated `-gpu num=<N>` fragment.
+### WLM configuration in the HPO YAML
 
-```sh
-iterate2 \
-  --wlm lsf \
-  --lsf-gpu-config-string "num=1:mode=exclusive_process:mps=yes:gmodel=NVIDIAA100_SXM4_80GB" \
-  --cpu-count 20 \
-  --mem-gb 512 \
-  ...
+All WLM-specific parameters (GPU count, memory, queue, job template path, …)
+live in an optional `wlm:` section of the HPO YAML:
+
+```yaml
+hpo:
+  lr: { type: float, low: 1e-5, high: 1e-2, log: true }
+
+static:
+  epochs: 50
+
+# WLM config – forwarded as ITERATE_WLM_* env vars to the plugin
+wlm:
+  gpu-count: 1
+  cpu-count: 8
+  mem-gb: 32
+  lsf-gpu-config: "num=1:mode=exclusive_process:mps=no:gmodel=NVIDIAA100_SXM4_80GB"
 ```
 
-This produces a `bsub` submission resembling:
+### Reference plugins
 
-```sh
-bsub -n 20 -R "span[hosts=1]" \
-     -gpu "num=1:mode=exclusive_process:mps=yes:gmodel=NVIDIAA100_SXM4_80GB" \
-     -M 512G -J hpo_trial_0 \
-     "cd /my/root && source .venv/bin/activate && python train.py ..."
-```
+See `examples/wlm_plugins/` for fully documented reference implementations:
 
-!!! note
-    `--gpu-count` is still used for the `rusage` memory/CPU reservation string even when `--lsf-gpu-config-string` is set. Set it to match the `num=` value in your GPU string.
+| Plugin | WLM |
+|---|---|
+| `lsf_plugin.sh` | IBM Spectrum LSF (`bsub -K`) |
+| `vela_plugin.py` | OpenShift / MLBatch PyTorchJob (`helm template \| oc create`) |
 
-!!! tip
-    Use exclusive process mode (`mode=exclusive_process`) together with MPS (`mps=yes`) to share a single A100 across multiple MPS clients while still pinning the job to one physical GPU.
-
----
+Writing a SLURM plugin follows the same pattern as `lsf_plugin.sh`.
 
 ---
 
@@ -320,7 +330,7 @@ By default `iterate2` runs one trial at a time. Pass `--parallelism N` to run up
 ```sh
 iterate2 \
   --parallelism 4 \
-  --wlm lsf \
+  --wlm-plugin examples/wlm_plugins/lsf_plugin.sh \
   ...
 ```
 
@@ -344,12 +354,12 @@ Output from concurrent trials is prefixed so you can follow individual workers:
 
 ### Output files
 
-| WLM | stdout | stderr |
-|---|---|---|
-| `none` | `trial_N.out` (written by iterate2) | `trial_N.err` (written by iterate2) |
-| `lsf` / `slurm` | `trial_N.out` (written by WLM on cluster) | `trial_N.err` (written by WLM on cluster) |
+iteate2 tells the plugin where to write output via `ITERATE_OUT_FILE` /
+`ITERATE_ERR_FILE`.  The plugin is responsible for directing its job's
+stdout/stderr to those files.  iterate2 extracts metrics from them after the
+plugin exits.
 
-For WLM backends the local WLM tool output (bsub/srun status messages) is written to `trial_N_wlm.out` / `trial_N_wlm.err` so the cluster-managed files are never overwritten.
+For local execution (no plugin) iterate2 writes them directly:
 
 ### SQLite and parallelism
 

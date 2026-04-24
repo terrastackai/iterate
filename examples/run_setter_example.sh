@@ -27,7 +27,6 @@ iterate2 \
   --root-dir      "${SCRIPT_DIR}" \
   --venv          ""                              \
   --param-setter  set                             \
-  --wlm           none                            \
   --optuna-study-name  bumpy_setter_study         \
   --optuna-db-path     "sqlite:///bumpy_setter_hpo.db" \
   --optuna-n-trials    20                         \

@@ -4,6 +4,16 @@
   
 static:
   global-mu: 23 42 66
+
+# =======================
+# WLM plugin configuration
+# Keys are forwarded to the WLM plugin as ITERATE_WLM_<KEY> env vars.
+# Omit this section entirely when running locally (no --wlm-plugin).
+# =======================
+# wlm:
+#   gpu-count: 1
+#   cpu-count: 4
+#   mem-gb: 32
   
 # ========================
 # Training hyperparameters - evaluated by optuna and passed to the underlying training script
