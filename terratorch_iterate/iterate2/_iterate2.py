@@ -817,10 +817,35 @@ def main():
     )
     logger.info("Study '%s' ready (existing trials: %d)", args.optuna_study_name, len(study.trials))
 
+    # ── Re-queue failed trials (25 % retry / 75 % new) ────────────────────
+    failed_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.FAIL]
+    n_total = args.optuna_n_trials
+    if failed_trials:
+        n_retry = max(1, round(0.25 * n_total))
+        n_retry = min(n_retry, len(failed_trials))   # can't retry more than we have
+        n_new   = n_total - n_retry
+        # enqueue the most-recent failed trials first
+        trials_to_retry = failed_trials[-n_retry:]
+        logger.info(
+            "Found %d failed trial(s). Re-queuing %d (25%%) and running %d new (75%%).",
+            len(failed_trials), n_retry, n_new,
+        )
+        for ft in trials_to_retry:
+            if ft.params:               # skip trials that had no params at all
+                study.enqueue_trial(ft.params)
+                logger.info("  Enqueued params from failed trial %d: %s", ft.number, ft.params)
+            else:
+                logger.info("  Skipped failed trial %d (no params recorded).", ft.number)
+        # adjust total so we run exactly n_new *additional* new trials on top
+        n_total = n_new + n_retry       # enqueued slots count toward n_trials
+    else:
+        logger.info("No failed trials found – running %d fresh trials.", n_total)
+    # ── end retry logic ───────────────────────────────────────────────────
+
     logger.info("Parallelism: %d worker(s)", args.parallelism)
     study.optimize(
         objective,
-        n_trials=args.optuna_n_trials,
+        n_trials=n_total,
         n_jobs=args.parallelism,
         catch=(Exception,),   # mark trial as FAILED and continue; never crash the study
     )
