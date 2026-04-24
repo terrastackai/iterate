@@ -103,6 +103,12 @@ utility = [
 # If you want to catch Nvidia GPU metrics, you also need to install pynvml:
 nvidia = ["pynvml"]
 
+# PostgreSQL coordinator plugin — installs the psycopg2 driver.
+# Use psycopg2-binary for a self-contained wheel (no libpq build dependency).
+# For production deployments that compile against a system libpq, replace with
+# psycopg2 (without -binary).
+postgresql = ["psycopg2-binary>=2.9"]
+
 # If you are using AMD/HIP GPUs, install pyrsmi 
 amd = ["pyrsmi"]
 

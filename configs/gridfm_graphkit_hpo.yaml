@@ -1,7 +1,8 @@
 # HPO configuration for gridfm-graphkit HGNS PF case118
 #
 # Hyperparameters:
-#   gpu_num   – number of GPUs to request from the WLM (launcher-level)
+#   compute   – group: selects gpu_num + num_workers + batch_size together
+#                  so that data-loading and batch sizes scale with GPU count
 #   bfloat16  – boolean flag (presence = --bfloat16, absence = flag omitted)
 #   tf32      – boolean flag (presence = --tf32, absence = flag omitted)
 #   compile   – torch.compile mode; null disables the flag entirely
@@ -14,29 +15,31 @@
 #   extracted from [performance] lines in trial output
 
 metrics:
-  - case118_ieee/layer_0_residual
+  - Validation loss
   - last epoch time
   - last epoch it/s
 
 hpo:
-  gpu_num:
-    type: categorical
-    choices: [1, 2, 4]
-
-  bfloat16:
-    type: flag               # store_true: true → --bfloat16, false → flag omitted
-
-  tf32:
-    type: flag               # store_true: true → --tf32, false → flag omitted
+  compute:
+    type: group             # one choice co-selects gpu_num, num_workers and batch_size
+    choices:
+      small:                # single GPU – conservative resources
+        gpu_num:     1
+        num_workers: 32
+        batch_size:  64
+      medium:               # two GPUs – doubled throughput
+        gpu_num:     2
+        num_workers: 16
+        batch_size:  32
+      large:                # four GPUs – full-node run
+        gpu_num:     4
+        num_workers: 8
+        batch_size:  16
 
   compile:
     type: categorical
     choices: ["max-autotune", "default", "reduce-overhead", null]
     # null → --compile flag is omitted entirely
-
-  num_workers:
-    type: categorical
-    choices: [8, 16, 24, 32]
 
   dataset:
     type: group             # one choice selects all bundled args together
