@@ -26,7 +26,7 @@ export MICROMAMBA_ENV="${MICROMAMBA_ENV:-gridfm}"
 STUDY_DB="${STUDY_DB:-sqlite:///gridfm_zuvela_hpo.db}"
 # For PostgreSQL: export STUDY_DB="postgresql://user:password@host:5432/optuna"
 
-iterate2 \
+iterate \
   --script            "${SCRIPT_DIR}/wlm_plugins/zuvela_plugin.sh" \
   --optuna-study-name gridfm_zuvela_hpo                             \
   --optuna-db-path    "${STUDY_DB}"                                 \

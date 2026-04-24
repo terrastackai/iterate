@@ -37,13 +37,14 @@ GRIDFM_ROOT="${GRIDFM_ROOT:-${HOME}/gitco/gridfm-graphkit}"
 MICROMAMBA_ENV="${MICROMAMBA_ENV:-gridfm}"
 
 # -- LSF resources ------------------------------------------------------------
-GPU_COUNT=1
+# GPU_COUNT comes from the HPO group param so LSF allocates the right number.
+GPU_COUNT="${ITERATE_PARAM_GPU_NUM:-1}"
 CPU_COUNT=16
 MEM_GB=32
 
 # -- Build training command from ITERATE_PARAM_* vars -------------------------
+# --gpu_num is NOT a gridfm_graphkit flag; GPU count is controlled via bsub -gpu.
 TRAIN_CMD="gridfm_graphkit train"
-TRAIN_CMD+=" --gpu_num    ${ITERATE_PARAM_GPU_NUM}"
 TRAIN_CMD+=" --batch_size ${ITERATE_PARAM_BATCH_SIZE}"
 TRAIN_CMD+=" --num_workers ${ITERATE_PARAM_NUM_WORKERS}"
 TRAIN_CMD+=" --config     ${ITERATE_PARAM_CONFIG}"

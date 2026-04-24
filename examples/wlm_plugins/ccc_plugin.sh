@@ -33,7 +33,8 @@ GRIDFM_VENV="${GRIDFM_VENV:-/u/rkie/venvs/venv_gridfm-graphkit}"
 CUDA_BASE="${CUDA_BASE:-/opt/share/cuda-12.8.1}"
 
 # -- LSF resources ------------------------------------------------------------
-GPU_COUNT=1
+# GPU_COUNT comes from the HPO group param so LSF allocates the right number.
+GPU_COUNT="${ITERATE_PARAM_GPU_NUM:-1}"
 CPU_COUNT=16
 MEM_GB=32
 MEM_MB=$(( MEM_GB * 1024 ))
@@ -41,8 +42,8 @@ GPU_STRING="num=${GPU_COUNT}:mode=exclusive_process:mps=no:gmodel=NVIDIAA100_SXM
 # QUEUE="normal"   # uncomment to target a specific queue
 
 # -- Build training command from ITERATE_PARAM_* vars -------------------------
+# --gpu_num is NOT a gridfm_graphkit flag; GPU count is controlled via bsub -gpu.
 TRAIN_CMD="gridfm_graphkit train"
-TRAIN_CMD+=" --gpu_num    ${ITERATE_PARAM_GPU_NUM}"
 TRAIN_CMD+=" --batch_size ${ITERATE_PARAM_BATCH_SIZE}"
 TRAIN_CMD+=" --num_workers ${ITERATE_PARAM_NUM_WORKERS}"
 TRAIN_CMD+=" --config     ${ITERATE_PARAM_CONFIG}"
