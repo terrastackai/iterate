@@ -1,23 +1,15 @@
-# =======================
-# Static parameters - passed to the underlying training script as is
-# =======================  
-  
-static:
-  global-mu: 23 42 66
+# HPO search space for the bumpy 3-D multimodal function.
+#
+# Only three sections are recognised by iterate2:
+#   metrics: – names to extract from the trial script output
+#   static:  – fixed parameters passed to every trial
+#   hpo:     – parameters Optuna will optimise
 
-# =======================
-# WLM plugin configuration
-# Keys are forwarded to the WLM plugin as ITERATE_WLM_<KEY> env vars.
-# Omit this section entirely when running locally (no --wlm-plugin).
-# =======================
-# wlm:
-#   gpu-count: 1
-#   cpu-count: 4
-#   mem-gb: 32
-  
-# ========================
-# Training hyperparameters - evaluated by optuna and passed to the underlying training script
-# ========================
+metrics:
+  - yval
+
+static:
+  global-mu: "23 42 66"
 
 hpo:
   x:

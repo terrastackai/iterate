@@ -52,26 +52,3 @@ static:
   run_name: run1
   log_dir: logs
   report-performance: true
-
-# ========================
-# WLM plugin configuration
-# Keys are forwarded to the WLM plugin as ITERATE_WLM_<KEY> env vars.
-# Uncomment and adapt the block that matches your plugin.
-# ========================
-#
-# --- LSF (examples/wlm_plugins/lsf_plugin.sh) ---
-# wlm:
-#   gpu-count: 1
-#   cpu-count: 16
-#   mem-gb: 32
-#   lsf-gpu-config: "num=1:mode=exclusive_process:mps=no:gmodel=NVIDIAA100_SXM4_80GB"
-#   # queue: normal
-#
-# --- Vela / OpenShift (examples/wlm_plugins/vela_plugin.py) ---
-# wlm:
-#   job-template:  examples/vela_gridfm_template.yaml
-#   chart-path:    ~/tmp/mlbatch/tools/pytorchjob-generator/chart
-#   namespace:     my-openshift-project
-#   cmd-placeholder: "{{HPO_COMMAND}}"
-#   pod-ready-timeout: 600
-#   job-timeout: 86400

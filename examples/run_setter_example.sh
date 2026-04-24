@@ -1,21 +1,15 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Example: iterate2 with --param-setter
+# Example: run a local trial script (no cluster, no WLM)
 #
-# Some scripts (e.g. those using Hydra, MMCV, or custom key-value CLIs) do not
-# accept traditional named flags:
+# iterate2 calls examples/bumpy_function.py directly for each trial.
+# All hyperparameters are supplied via ITERATE_PARAM_<KEY> environment
+# variables.  The script is responsible for:
+#   - reading those variables
+#   - running the computation
+#   - writing "metric_name: value" lines to ITERATE_OUT_FILE
 #
-#   python script.py --learning-rate 0.001 --batch-size 32
-#
-# Instead they expect a setter-style interface:
-#
-#   python script.py --set learning_rate 0.001 --set batch_size 32
-#
-# Pass --param-setter <flag> to iterate2 to switch to this style.
-# Every HPO and static parameter will be forwarded as:
-#   --<flag> key value
-#
-# This example uses examples/bumpy_setter.py which accepts --set key value.
+# The metrics section in the HPO YAML tells iterate2 which names to look for.
 # =============================================================================
 
 set -euo pipefail
@@ -23,12 +17,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 iterate2 \
-  --script        "${SCRIPT_DIR}/bumpy_setter.py" \
-  --root-dir      "${SCRIPT_DIR}" \
-  --venv          ""                              \
-  --param-setter  set                             \
-  --optuna-study-name  bumpy_setter_study         \
-  --optuna-db-path     "sqlite:///bumpy_setter_hpo.db" \
-  --optuna-n-trials    20                         \
-  --hpo-yaml      "${SCRIPT_DIR}/bumpy_setter_hpo.yaml" \
-  --metric        "yval"
+  --script            "${SCRIPT_DIR}/bumpy_function.py"  \
+  --optuna-study-name bumpy_local_study                   \
+  --optuna-db-path    "sqlite:///bumpy_local_hpo.db"      \
+  --optuna-n-trials   20                                  \
+  --hpo-yaml          "${SCRIPT_DIR}/bumpy_hpo.yaml"
