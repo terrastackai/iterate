@@ -46,7 +46,7 @@ hpo:
     choices:
       case118:
         config: ./examples/config/HGNS_PF_datakit_case118.yaml
-        data_path: /u/rkie/
+        data_path: /u/rki/
 
 static:
   run_name: run1
