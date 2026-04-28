@@ -23,8 +23,10 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 export GRIDFM_ROOT="${GRIDFM_ROOT:-${HOME}/gitco/gridfm-graphkit}"
 export MICROMAMBA_ENV="${MICROMAMBA_ENV:-gridfm}"
 
-STUDY_DB="${STUDY_DB:-sqlite:///gridfm_zuvela_hpo.db}"
-# For PostgreSQL: export STUDY_DB="postgresql://user:password@host:5432/optuna"
+# Require a PostgreSQL URL – set via environment before calling this script:
+#   export POSTGRES_URL="postgresql://user:password@host:5432/optuna_studies"
+: "${POSTGRES_URL:?Please set POSTGRES_URL=postgresql://user:password@host:port/dbname}"
+STUDY_DB="${POSTGRES_URL}"
 
 iterate \
   --script            "${SCRIPT_DIR}/wlm_plugins/zuvela_plugin.sh" \
