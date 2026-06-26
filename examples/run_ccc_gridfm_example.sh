@@ -30,8 +30,8 @@ export CUDA_BASE="${CUDA_BASE:-/opt/share/cuda-12.8.1}"
 
 iterate \
   --script            "${SCRIPT_DIR}/wlm_plugins/ccc_plugin.sh" \
-  --optuna-study-name gridfm_ccc_hpo                             \
+  --optuna-study-name gridfm_ccc_hpo_2                             \
   --optuna-db-path    "${POSTGRES_URL}"                          \
-  --parallelism       4                                          \
-  --optuna-n-trials   20                                         \
+  --parallelism       30                                         \
+  --optuna-n-trials   30                                         \
   --hpo-yaml          "${REPO_ROOT}/configs/gridfm_graphkit_hpo.yaml"
