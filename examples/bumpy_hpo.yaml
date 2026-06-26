@@ -11,6 +11,11 @@ metrics:
 static:
   global-mu: "23 42 66"
 
+wlm:
+  gpu-count: 0
+  cpu-count: 2
+  mem-gb: 4
+
 hpo:
   x:
     type: float

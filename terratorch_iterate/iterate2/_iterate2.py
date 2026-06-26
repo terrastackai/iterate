@@ -68,8 +68,12 @@ def parse_args():
     )
     p.add_argument("--script",            required=True,
                    help="Executable to call for each trial")
+    p.add_argument("--wlm-plugin",        default=None,
+                   help="Optional wrapper executable. When set, iterate2 invokes "
+                        "'<wlm-plugin> <script> [--<wlm-key> <value>]...' per trial, "
+                        "where the wlm keys come from the YAML 'wlm:' section.")
     p.add_argument("--hpo-yaml",          required=True,
-                   help="YAML file with 'hpo:', 'static:', and 'metrics:' sections")
+                   help="YAML file with 'hpo:', 'static:', 'metrics:', and optional 'wlm:' sections")
     p.add_argument("--optuna-study-name", required=True)
     p.add_argument("--optuna-db-path",    required=True,
                    help="Optuna storage URL (sqlite:///hpo.db, js:///journal.log, postgresql://…)")
@@ -96,6 +100,13 @@ def load_static(data: dict) -> dict:
     static = data.get("static", {})
     logger.info("Static params: %d key(s): %s", len(static), list(static.keys()))
     return static
+
+def load_wlm(data: dict) -> dict:
+    wlm = data.get("wlm", {}) or {}
+    if wlm:
+        logger.info("WLM config: %d key(s): %s", len(wlm), list(wlm.keys()))
+    return wlm
+
 
 def load_metrics(data: dict, fallback: str = "score") -> List[str]:
     raw = data.get("metrics", None)
@@ -180,11 +191,19 @@ def _stream(pipe, dest_file: str, trial_id: int, dest_stream):
                 dest_stream.write(f"{prefix} {line}")
                 dest_stream.flush()
 
-def run_script(script: str, env: dict, trial_id: int, out_file: str, err_file: str):
-    """Run *script* with *env*, stream output, raise on non-zero exit."""
-    logger.info("Trial %d: calling %s", trial_id, script)
+def run_script(script: str, env: dict, trial_id: int, out_file: str, err_file: str,
+               wlm_plugin: Optional[str] = None, wlm_config: Optional[dict] = None):
+    """Run *script* (or *wlm_plugin* wrapping it) with *env*, stream output."""
+    if wlm_plugin:
+        argv = [wlm_plugin, script]
+        for k, v in (wlm_config or {}).items():
+            argv.extend([f"--{k}", str(v)])
+        logger.info("Trial %d: calling plugin %s with argv %s", trial_id, wlm_plugin, argv)
+    else:
+        argv = [script]
+        logger.info("Trial %d: calling %s", trial_id, script)
     proc = subprocess.Popen(
-        [script], env=env,
+        argv, env=env,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
     import threading as _t
@@ -219,6 +238,7 @@ def main():
     data       = load_yaml(args.hpo_yaml)
     hpo_space  = load_hpo_space(data)
     static     = load_static(data)
+    wlm_config = load_wlm(data)
     metrics    = load_metrics(data)
     directions = ["maximize"] * len(metrics)
     logger.info("Metrics: %s", metrics)
@@ -271,8 +291,9 @@ def main():
             env_key = "ITERATE_PARAM_" + str(k).upper().replace("-", "_").replace(" ", "_")
             env[env_key] = str(v) if v is not None else ""
 
-        # ── Call the script ───────────────────────────────────────────────
-        run_script(args.script, env, trial.number, out_file, err_file)
+        # ── Call the script (optionally wrapped by --wlm-plugin) ──────────
+        run_script(args.script, env, trial.number, out_file, err_file,
+                   wlm_plugin=args.wlm_plugin, wlm_config=wlm_config)
 
         # ── Extract metrics ───────────────────────────────────────────────
         values = extract_metrics(out_file, err_file, metrics)
